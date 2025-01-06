@@ -8,7 +8,8 @@ setup(
         "yfinance",
         "pandas",
         "numpy",
-        "pandas-datareader",
+        "click",
+        "rich",
     ],
     author="Your Name",
     author_email="your.email@example.com",
@@ -22,4 +23,9 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.6",
+    entry_points={
+        'console_scripts': [
+            'etf-analyzer=etf_analyzer.cli:cli',
+        ],
+    },
 ) 
