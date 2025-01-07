@@ -67,23 +67,77 @@ def analyze(ticker, verbose, validate, sources, history):
             val_table.add_column("Metric", style="cyan")
             val_table.add_column("Our Value", style="magenta")
             val_table.add_column("External Value", style="green")
-            val_table.add_column("Difference", style="yellow")
+            val_table.add_column("Difference", justify="right")
+            val_table.add_column("Note", style="italic")
             
             for metric, values in validation_data.items():
-                val_table.add_row(
-                    metric,
-                    f"{values['our_value']:.2%}",
-                    f"{values['external_value']:.2%}",
-                    f"{values['difference']:.2%}"
-                )
+                our_value = values.get('our_value')
+                ext_value = values.get('external_value')
+                diff = values.get('difference')
+                
+                # Format based on metric type
+                if metric == 'AUM':
+                    formatted_row = [
+                        metric,
+                        f"${our_value:,.0f}" if our_value is not None else "N/A",
+                        f"${ext_value:,.0f}" if ext_value is not None else "N/A",
+                        f"[{_get_difference_style(diff, metric)}]{diff:.1%}[/]" if diff is not None else "N/A",
+                        _get_difference_note(diff, metric)
+                    ]
+                elif metric == 'Volume':
+                    formatted_row = [
+                        metric,
+                        f"{our_value:,.0f}" if our_value is not None else "N/A",
+                        f"{ext_value:,.0f}" if ext_value is not None else "N/A",
+                        f"[{_get_difference_style(diff, metric)}]{diff:.1%}[/]" if diff is not None else "N/A",
+                        _get_difference_note(diff, metric)
+                    ]
+                else:  # Percentage metrics like Expense Ratio
+                    formatted_row = [
+                        metric,
+                        f"{our_value:.2%}" if our_value is not None else "N/A",
+                        f"{ext_value:.2%}" if ext_value is not None else "N/A",
+                        f"[{_get_difference_style(diff, metric)}]{diff:.2%}[/]" if diff is not None else "N/A",
+                        _get_difference_note(diff, metric)
+                    ]
+                
+                val_table.add_row(*formatted_row)
             
             console.print("\n")
             console.print(val_table)
 
         if sources:
             source_data = analyzer.compare_data_sources()
-            # Display source comparison table
             
+            # Create source comparison table
+            source_table = Table(title=f"Data Source Comparison: {ticker}")
+            source_table.add_column("Metric", style="cyan")
+            
+            # Add a column for each source
+            for source in source_data.keys():
+                source_table.add_column(source.capitalize(), style="magenta")
+            
+            # Add rows for each metric
+            metrics = ['expense_ratio', 'volatility', 'volume']
+            for metric in metrics:
+                row = [metric.replace('_', ' ').title()]
+                for source, data in source_data.items():
+                    if data and metric in data:
+                        value = data[metric]
+                        # Format based on metric type
+                        if 'ratio' in metric:
+                            row.append(f"{value:.2%}")
+                        elif metric == 'volume':
+                            row.append(f"{value:,.0f}")
+                        else:
+                            row.append(f"{value:.2%}")
+                    else:
+                        row.append("N/A")
+                source_table.add_row(*row)
+            
+            console.print("\n")
+            console.print(source_table)
+
         if history:
             historical_data = analyzer.track_historical_metrics()
             
@@ -146,6 +200,60 @@ def compare(tickers):
         table.add_row(*row)
     
     console.print(table)
+
+def _get_difference_style(diff, metric):
+    """Get color style based on difference magnitude and metric type"""
+    if diff is None:
+        return "white"
+    
+    # Different thresholds for different metrics
+    thresholds = {
+        'Expense Ratio': {'low': 0.0001, 'medium': 0.0005},  # 0.01% and 0.05%
+        'AUM': {'low': 0.10, 'medium': 0.25},                # 10% and 25%
+        'Volume': {'low': 0.15, 'medium': 0.30},             # 15% and 30%
+    }
+    
+    # Get appropriate thresholds
+    t = thresholds.get(metric, {'low': 0.05, 'medium': 0.15})
+    
+    if diff <= t['low']:
+        return "green"
+    elif diff <= t['medium']:
+        return "yellow"
+    else:
+        return "red"
+
+def _get_difference_note(diff, metric):
+    """Get explanatory note for significant differences"""
+    if diff is None:
+        return ""
+        
+    notes = {
+        'Expense Ratio': {
+            'high': "Significant variation in expense ratio reporting",
+            'medium': "Minor discrepancy in expense ratio",
+            'low': ""
+        },
+        'AUM': {
+            'high': "Large AUM difference, possibly due to reporting date mismatch",
+            'medium': "AUM varies between sources",
+            'low': ""
+        },
+        'Volume': {
+            'high': "Volume differs significantly, check market conditions",
+            'medium': "Volume varies between sources",
+            'low': ""
+        }
+    }
+    
+    # Get appropriate thresholds and notes
+    if metric in notes:
+        if diff > 0.25:
+            return notes[metric]['high']
+        elif diff > 0.10:
+            return notes[metric]['medium']
+    
+    return ""
 
 if __name__ == '__main__':
     cli() 

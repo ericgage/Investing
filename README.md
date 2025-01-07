@@ -32,6 +32,43 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+### Browser Automation Setup
+
+The ETF analyzer uses browser automation for enhanced data collection. Follow these steps based on your operating system:
+
+#### macOS
+1. Install Chrome and ChromeDriver:
+```bash
+# Using Homebrew
+brew install --cask chromium
+brew install chromedriver
+```
+
+2. Remove security quarantine:
+```bash
+# Allow ChromeDriver
+xattr -d com.apple.quarantine /opt/homebrew/bin/chromedriver
+
+# If using Chrome, also allow it
+xattr -d com.apple.quarantine /Applications/Google\ Chrome.app
+```
+
+3. Additional Security Steps:
+   - Go to System Preferences > Security & Privacy > General
+   - Look for messages about ChromeDriver being blocked
+   - Click "Allow Anyway"
+
+#### Ubuntu/Debian
+```bash
+# Install Chrome and ChromeDriver
+sudo apt install chromium-browser chromium-chromedriver
+```
+
+#### Windows
+1. Download and install Chrome from google.com/chrome
+2. Download ChromeDriver from https://sites.google.com/chromium.org/driver/
+3. Add ChromeDriver to your system PATH
+
 ### Updating the Package
 If you've made changes to the code or pulled updates:
 
@@ -110,7 +147,7 @@ erDiagram
 
 ## Data Sources
 
-### Yahoo Finance API
+### 1. Yahoo Finance API
 The project uses the `yfinance` library to fetch ETF data from Yahoo Finance. This provides:
 - Historical price data
 - Trading volume
@@ -118,8 +155,33 @@ The project uses the `yfinance` library to fetch ETF data from Yahoo Finance. Th
 - Expense ratios
 - Assets under management (when available)
 
+### 2. ETF.com Integration
+The analyzer includes web scraping capabilities for ETF.com, providing:
+- Expense ratio validation
+- AUM (Assets Under Management)
+- Average daily volume
+- Number of holdings
+- Segment/category information
+- Issuer details
+
+### Data Management Features
+
+#### Rate Limiting
+- Respects server limits (10 requests/minute)
+- Automatic request throttling
+- Prevents API/server overload
+
+#### Caching System
+- 24-hour cache for ETF.com data
+- Local cache storage in `.cache` directory
+- Automatic cache invalidation
+- Reduces server load and improves performance
+
 ### Data Reliability
-Yahoo Finance data is generally reliable but may have occasional gaps or delays. The package includes error handling to manage these cases.
+- Multiple source validation
+- Cross-reference between Yahoo Finance and ETF.com
+- Error handling for service outages
+- Automatic fallback to cached data
 
 ## Calculations and Metrics
 
@@ -188,12 +250,12 @@ Combines three components:
 etf-analyzer analyze VOO
 ```
 
-### Detailed Analysis
+### Advanced Analysis
 ```bash
 # Show detailed breakdown of metrics
 etf-analyzer analyze VOO --verbose
 
-# Compare with external data sources
+# Compare with ETF.com data
 etf-analyzer analyze VOO --validate
 
 # Compare different data providers

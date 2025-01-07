@@ -3,6 +3,10 @@ import numpy as np
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+import re
+from .utils import rate_limit, ETFDataCache
+from .browser import BrowserSession
+import time
 
 class ETFAnalyzer:
     def __init__(self, ticker, benchmark_ticker="SPY"):
@@ -10,21 +14,41 @@ class ETFAnalyzer:
         self.benchmark_ticker = benchmark_ticker
         self.data = {}
         self.metrics = {}
+        self.cache = ETFDataCache()
         
     def collect_basic_info(self):
         """
-        Gather fundamental ETF information
+        Gather fundamental ETF information with improved expense ratio collection
         """
         try:
             ticker_info = yf.Ticker(self.ticker).info
             
-            # Try multiple fields for expense ratio
-            expense_ratio = (
-                ticker_info.get('annualReportExpenseRatio') or
-                ticker_info.get('expenseRatio') or
-                ticker_info.get('totalExpenseRatio') or
-                0.0
-            )
+            # Try to get expense ratio from multiple sources
+            expense_ratio = None
+            
+            # 1. Try ETF.com first (most reliable)
+            etf_com_data = self._get_etf_com_metrics()
+            if etf_com_data and 'expense_ratio' in etf_com_data:
+                expense_ratio = etf_com_data['expense_ratio']
+            
+            # 2. If ETF.com fails, try Yahoo Finance fields
+            if expense_ratio is None:
+                expense_ratio = (
+                    ticker_info.get('annualReportExpenseRatio') or
+                    ticker_info.get('expenseRatio') or
+                    ticker_info.get('totalExpenseRatio')
+                )
+            
+            # 3. If still None, try the Yahoo Finance API directly
+            if expense_ratio is None:
+                yahoo_api_data = self._get_yahoo_api_metrics()
+                if yahoo_api_data and 'expense_ratio' in yahoo_api_data:
+                    expense_ratio = yahoo_api_data['expense_ratio']
+            
+            # 4. If all else fails, warn user and use 0.0
+            if expense_ratio is None:
+                print(f"Warning: Could not find expense ratio for {self.ticker}")
+                expense_ratio = 0.0
             
             self.data['basic'] = {
                 'name': ticker_info.get('longName', 'N/A'),
@@ -189,28 +213,47 @@ class ETFAnalyzer:
             return 0.0 
 
     def validate_metrics(self):
-        """
-        Validate metrics against external sources
-        """
+        """Validate metrics against external sources"""
         validation_data = {}
         
-        # Validate expense ratio
-        our_expense = self.data['basic']['expenseRatio']
-        ext_expense = self._fetch_external_expense_ratio()
-        validation_data['Expense Ratio'] = {
-            'our_value': our_expense,
-            'external_value': ext_expense,
-            'difference': abs(our_expense - ext_expense)
-        }
+        # Get ETF.com data
+        etf_com_data = self._get_etf_com_metrics()
         
-        # Validate volatility
-        our_vol = self.metrics['volatility']
-        ext_vol = self._fetch_external_volatility()
-        validation_data['Volatility'] = {
-            'our_value': our_vol,
-            'external_value': ext_vol,
-            'difference': abs(our_vol - ext_vol)
-        }
+        # Validate expense ratio
+        our_expense = self.data['basic'].get('expenseRatio')
+        ext_expense = etf_com_data.get('expense_ratio') if etf_com_data else self._fetch_external_expense_ratio()
+        if our_expense is not None or ext_expense is not None:
+            validation_data['Expense Ratio'] = {
+                'our_value': our_expense,
+                'external_value': ext_expense,
+                'difference': abs(our_expense - ext_expense) if (our_expense is not None and ext_expense is not None) else None
+            }
+        
+        # Add AUM validation with better difference calculation
+        if etf_com_data and 'aum' in etf_com_data:
+            our_aum = self.data['basic'].get('totalAssets')
+            ext_aum = etf_com_data['aum']
+            if our_aum is not None and ext_aum is not None:
+                # Calculate relative difference
+                avg_aum = (our_aum + ext_aum) / 2
+                diff = abs(our_aum - ext_aum) / avg_aum if avg_aum > 0 else None
+                
+                validation_data['AUM'] = {
+                    'our_value': our_aum,
+                    'external_value': ext_aum,
+                    'difference': diff
+                }
+        
+        # Add volume validation
+        if etf_com_data and 'avg_volume' in etf_com_data:
+            our_volume = self.data['price_history']['Volume'].mean() if 'price_history' in self.data else None
+            ext_volume = etf_com_data['avg_volume']
+            if our_volume is not None or ext_volume is not None:
+                validation_data['Volume'] = {
+                    'our_value': our_volume,
+                    'external_value': ext_volume,
+                    'difference': abs(our_volume - ext_volume) / max(our_volume, ext_volume) if (our_volume and ext_volume) else None
+                }
         
         return validation_data
 
@@ -267,19 +310,180 @@ class ETFAnalyzer:
         """Fetch directly from Yahoo Finance API"""
         try:
             url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{self.ticker}"
-            # Implementation would fetch and parse data
-            return metrics
+            params = {
+                "modules": "price,defaultKeyStatistics,summaryDetail"
+            }
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            
+            response = requests.get(url, params=params, headers=headers)
+            if response.status_code == 200:
+                data = response.json()['quoteSummary']['result'][0]
+                
+                return {
+                    'expense_ratio': float(data.get('defaultKeyStatistics', {}).get('expenseRatio', {}).get('raw', 0)),
+                    'volatility': float(data.get('defaultKeyStatistics', {}).get('beta', {}).get('raw', 0)),
+                    'volume': float(data.get('price', {}).get('regularMarketVolume', {}).get('raw', 0))
+                }
+        except Exception as e:
+            print(f"Error fetching Yahoo API data: {str(e)}")
+            return None
+
+    @rate_limit(calls_per_minute=5)
+    def _get_etf_com_metrics(self):
+        """Fetch and parse data from ETF.com using Selenium with improved error handling"""
+        cached_data = self.cache.get(self.ticker, 'etf_com')
+        if cached_data:
+            return cached_data
+            
+        try:
+            with BrowserSession() as driver:
+                url = f"https://www.etf.com/{self.ticker}"
+                driver.get(url)
+                time.sleep(3)
+                
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+                
+                # Debug: Print the page title to verify we're on the right page
+                print(f"Debug: Page title - {soup.title.text if soup.title else 'No title'}")
+                
+                # First, verify we're on the correct page
+                if not soup.find('div', text=re.compile(self.ticker, re.IGNORECASE)):
+                    print(f"Warning: ETF ticker {self.ticker} not found on page")
+                    return self._get_fallback_metrics()
+                
+                # Get metrics with debug info
+                metrics = {}
+                
+                # Parse expense ratio
+                expense_ratio = self._parse_expense_ratio(soup)
+                if expense_ratio is not None:
+                    metrics['expense_ratio'] = expense_ratio
+                
+                # Parse AUM
+                aum = self._parse_aum(soup)
+                if aum is not None:
+                    metrics['aum'] = aum
+                
+                # Parse volume
+                volume = self._parse_volume(soup)
+                if volume is not None:
+                    metrics['volume'] = volume
+                
+                # Parse additional metrics only if we have the basic ones
+                if any([expense_ratio, aum, volume]):
+                    metrics.update({
+                        'holdings': self._parse_holdings(soup),
+                        'segment': self._parse_segment(soup),
+                        'issuer': self._parse_issuer(soup)
+                    })
+                    
+                    # Cache only if we got some valid data
+                    self.cache.set(self.ticker, 'etf_com', metrics)
+                    
+                return metrics if metrics else self._get_fallback_metrics()
+                
+        except Exception as e:
+            print(f"Error fetching ETF.com data: {str(e)}")
+            print("Falling back to alternative data sources...")
+            return self._get_fallback_metrics()
+
+    def _get_fallback_metrics(self):
+        """Get metrics from alternative sources when ETF.com fails"""
+        return {
+            'expense_ratio': self.data['basic']['expenseRatio'],
+            'aum': self.data['basic'].get('totalAssets', None),
+            'avg_volume': self.data['price_history']['Volume'].mean() if 'price_history' in self.data else None,
+            'holdings': None,
+            'segment': self.data['basic'].get('category', None),
+            'issuer': None
+        }
+
+    def _parse_expense_ratio(self, soup):
+        """Parse expense ratio with improved error handling"""
+        try:
+            for pattern in ['Expense Ratio', 'Annual Fee', 'Management Fee']:
+                expense_div = soup.find('div', text=re.compile(pattern, re.IGNORECASE))
+                if expense_div and expense_div.find_next('div'):
+                    ratio_text = expense_div.find_next('div').text.strip()
+                    print(f"Debug: Found expense ratio text: {ratio_text}")  # Debug line
+                    
+                    # Only process if it looks like a percentage
+                    if '%' in ratio_text or 'bps' in ratio_text:
+                        match = re.search(r'(\d+\.?\d*)\s*(%|bps)', ratio_text)
+                        if match:
+                            value = float(match.group(1))
+                            return value / (100 if match.group(2) == '%' else 10000)
+            return None
+        except Exception as e:
+            print(f"Error parsing expense ratio: {str(e)}")
+            return None
+
+    def _parse_aum(self, soup):
+        """Parse Assets Under Management with robust error handling"""
+        try:
+            # Try multiple possible div text patterns
+            for pattern in ['AUM', 'Assets Under Management', 'Fund Size']:
+                aum_div = soup.find('div', text=re.compile(pattern, re.IGNORECASE))
+                if aum_div and aum_div.find_next('div'):
+                    aum_text = aum_div.find_next('div').text.strip()
+                    # Extract currency value and multiplier
+                    match = re.search(r'\$?\s*([\d,.]+)\s*([BMK])?', aum_text)
+                    if match:
+                        value = float(match.group(1).replace(',', ''))
+                        multiplier = {'B': 1e9, 'M': 1e6, 'K': 1e3}.get(match.group(2), 1) if match.group(2) else 1
+                        return value * multiplier
+            return None
+        except Exception as e:
+            print(f"Error parsing AUM: {str(e)}")
+            return None
+
+    def _parse_volume(self, soup):
+        """Parse average trading volume with robust error handling"""
+        try:
+            # Try multiple possible div text patterns
+            for pattern in ['Avg Daily Volume', 'Average Volume', 'Trading Volume']:
+                volume_div = soup.find('div', text=re.compile(pattern, re.IGNORECASE))
+                if volume_div and volume_div.find_next('div'):
+                    vol_text = volume_div.find_next('div').text.strip()
+                    # Extract numeric value and multiplier
+                    match = re.search(r'([\d,.]+)\s*([BMK])?', vol_text)
+                    if match:
+                        value = float(match.group(1).replace(',', ''))
+                        multiplier = {'B': 1e9, 'M': 1e6, 'K': 1e3}.get(match.group(2), 1) if match.group(2) else 1
+                        return value * multiplier
+            return None
+        except Exception as e:
+            print(f"Error parsing volume: {str(e)}")
+            return None
+
+    def _parse_holdings(self, soup):
+        """Parse number of holdings"""
+        try:
+            holdings_div = soup.find('div', text=re.compile('Number of Holdings'))
+            if holdings_div:
+                return int(holdings_div.find_next('div').text.strip())
         except:
             return None
 
-    def _get_etf_com_metrics(self):
-        """Fetch from ETF.com"""
+    def _parse_segment(self, soup):
+        """Parse ETF segment/category"""
         try:
-            url = f"https://www.etf.com/{self.ticker}"
-            # Implementation would fetch and parse data
-            return metrics
+            segment_div = soup.find('div', text=re.compile('Segment'))
+            if segment_div:
+                return segment_div.find_next('div').text.strip()
         except:
-            return None 
+            return None
+
+    def _parse_issuer(self, soup):
+        """Parse ETF issuer"""
+        try:
+            issuer_div = soup.find('div', text=re.compile('Issuer'))
+            if issuer_div:
+                return issuer_div.find_next('div').text.strip()
+        except:
+            return None
 
     def track_historical_metrics(self, lookback_periods=['1mo', '3mo', '6mo', '1y']):
         """
@@ -310,3 +514,13 @@ class ETFAnalyzer:
                 continue
         
         return historical_metrics 
+
+    def _validate_numeric_text(self, text):
+        """Helper to validate numeric text before parsing"""
+        # Remove common non-numeric characters
+        cleaned = text.replace(',', '').replace('$', '').replace('%', '').strip()
+        try:
+            float(cleaned)
+            return True
+        except ValueError:
+            return False 
