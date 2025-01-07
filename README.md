@@ -359,3 +359,50 @@ Each metric is validated using:
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+## Data Sources and Validation
+
+### Primary Data Sources
+1. **ETF.com (Primary)**
+   - Expense ratios (most accurate)
+   - AUM data
+   - Trading volume
+   - Holdings information
+   - Segment/category data
+
+2. **Yahoo Finance (Secondary)**
+   - Historical price data
+   - Basic ETF information
+   - Trading metrics
+   - Fallback data source
+
+### Data Collection Features
+- Rate limiting (5 requests/minute)
+- 24-hour data caching
+- Multiple source validation
+- Automatic fallback sources
+- Debug logging options
+
+### Validation Process
+1. **Expense Ratio Validation**
+   - Primary: ETF.com scraping
+   - Secondary: Yahoo Finance API
+   - Fallback: Provider websites
+   - Tolerance: 0.01% difference
+
+2. **AUM Validation**
+   - Multiple source comparison
+   - Date-aware validation
+   - Tolerance: 10% difference
+
+3. **Volume Validation**
+   - Rolling average comparison
+   - Market condition awareness
+   - Tolerance: 15% difference
+
+### Error Handling
+- Automatic retry logic
+- Graceful degradation
+- Multiple fallback sources
+- Detailed error reporting
+- Debug mode for troubleshooting
+
