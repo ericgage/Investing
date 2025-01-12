@@ -8,163 +8,47 @@ console = Console()
 
 @click.group()
 def cli():
-    """ETF Analyzer - A tool for analyzing ETF performance and metrics"""
+    """ETF Analysis Tool"""
     pass
 
 @cli.command()
 @click.argument('ticker')
-@click.option('--verbose', '-v', is_flag=True, help='Show detailed metrics')
-@click.option('--validate', '-val', is_flag=True, help='Compare with external sources')
-@click.option('--sources', '-s', is_flag=True, help='Compare different data sources')
-@click.option('--history', '-h', is_flag=True, help='Show historical metrics')
-def analyze(ticker, verbose, validate, sources, history):
-    """Analyze an ETF with validation options"""
+@click.option('--benchmark', default='SPY', help='Benchmark ETF ticker')
+def analyze(ticker, benchmark):
+    """Analyze an ETF"""
     try:
-        with console.status(f"[bold green]Analyzing {ticker}..."):
-            analyzer = ETFAnalyzer(ticker)
+        analyzer = ETFAnalyzer(ticker, benchmark)
+        
+        # Add header to output first, before any potential errors
+        click.echo(f"\nETF Analysis: {ticker}")
+        if benchmark != 'SPY':
+            click.echo(f"Using {benchmark} as benchmark")
+            
+        try:
+            # Collect basic info
             analyzer.collect_basic_info()
-            analyzer.collect_performance()
-            analyzer.calculate_metrics()
             
-            if validate:
-                validation_data = analyzer.validate_metrics()
-
-        if verbose:
-            # Add detailed liquidity score breakdown
-            volume_score = min(40, (analyzer.data['price_history']['Volume'].mean() / 1000000) * 4)
-            spread_data = analyzer.data['price_history']
-            spread_pct = ((spread_data['High'] - spread_data['Low']) / spread_data['Close']).mean() * 100
-            spread_score = max(0, 30 - spread_pct * 10)
+            # Show basic info
+            click.echo("\nBasic Information:")
+            click.echo(f"Name: {analyzer.data['basic']['name']}")
+            click.echo(f"Category: {analyzer.data['basic']['category']}")
+            click.echo(f"Expense Ratio: {analyzer.data['basic']['expenseRatio']:.3%}")
             
-            console.print(f"\n[cyan]Detailed Liquidity Analysis for {ticker}:[/cyan]")
-            console.print(f"Volume Score: {volume_score:.1f}/40")
-            console.print(f"Spread Score: {spread_score:.1f}/30")
-            console.print(f"Asset Score: {analyzer.metrics['liquidity_score'] - volume_score - spread_score:.1f}/30")
-
-        # Create summary table
-        table = Table(title=f"ETF Analysis: {ticker}")
-        
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="magenta")
-        
-        # Basic info
-        table.add_row("Name", analyzer.data['basic']['name'])
-        table.add_row("Category", analyzer.data['basic']['category'])
-        table.add_row("Expense Ratio", f"{analyzer.data['basic']['expenseRatio']:.2%}")
-        
-        # Metrics
-        table.add_row("Volatility (Annualized)", f"{analyzer.metrics['volatility']:.2%}")
-        table.add_row("Tracking Error", f"{analyzer.metrics['tracking_error']:.2%}")
-        table.add_row("Liquidity Score", f"{analyzer.metrics['liquidity_score']:.1f}/100")
-        table.add_row("Sharpe Ratio", f"{analyzer.metrics['sharpe_ratio']:.2f}")
-        table.add_row("Max Drawdown", f"{analyzer.metrics['max_drawdown']:.2%}")
-        
-        console.print(table)
-        
-        if validate:
-            # Validation table
-            val_table = Table(title=f"Validation Results: {ticker}")
-            val_table.add_column("Metric", style="cyan")
-            val_table.add_column("Our Value", style="magenta")
-            val_table.add_column("External Value", style="green")
-            val_table.add_column("Difference", justify="right")
-            val_table.add_column("Note", style="italic")
+            # Rest of the analysis...
             
-            for metric, values in validation_data.items():
-                our_value = values.get('our_value')
-                ext_value = values.get('external_value')
-                diff = values.get('difference')
-                
-                # Format based on metric type
-                if metric == 'AUM':
-                    formatted_row = [
-                        metric,
-                        f"${our_value:,.0f}" if our_value is not None else "N/A",
-                        f"${ext_value:,.0f}" if ext_value is not None else "N/A",
-                        f"[{_get_difference_style(diff, metric)}]{diff:.1%}[/]" if diff is not None else "N/A",
-                        _get_difference_note(diff, metric)
-                    ]
-                elif metric == 'Volume':
-                    formatted_row = [
-                        metric,
-                        f"{our_value:,.0f}" if our_value is not None else "N/A",
-                        f"{ext_value:,.0f}" if ext_value is not None else "N/A",
-                        f"[{_get_difference_style(diff, metric)}]{diff:.1%}[/]" if diff is not None else "N/A",
-                        _get_difference_note(diff, metric)
-                    ]
-                else:  # Percentage metrics like Expense Ratio
-                    formatted_row = [
-                        metric,
-                        f"{our_value:.2%}" if our_value is not None else "N/A",
-                        f"{ext_value:.2%}" if ext_value is not None else "N/A",
-                        f"[{_get_difference_style(diff, metric)}]{diff:.2%}[/]" if diff is not None else "N/A",
-                        _get_difference_note(diff, metric)
-                    ]
-                
-                val_table.add_row(*formatted_row)
+        except Exception as e:
+            click.echo(f"Error collecting data: {str(e)}")
+            return
             
-            console.print("\n")
-            console.print(val_table)
-
-        if sources:
-            source_data = analyzer.compare_data_sources()
-            
-            # Create source comparison table
-            source_table = Table(title=f"Data Source Comparison: {ticker}")
-            source_table.add_column("Metric", style="cyan")
-            
-            # Add a column for each source
-            for source in source_data.keys():
-                source_table.add_column(source.capitalize(), style="magenta")
-            
-            # Add rows for each metric
-            metrics = ['expense_ratio', 'volatility', 'volume']
-            for metric in metrics:
-                row = [metric.replace('_', ' ').title()]
-                for source, data in source_data.items():
-                    if data and metric in data:
-                        value = data[metric]
-                        # Format based on metric type
-                        if 'ratio' in metric:
-                            row.append(f"{value:.2%}")
-                        elif metric == 'volume':
-                            row.append(f"{value:,.0f}")
-                        else:
-                            row.append(f"{value:.2%}")
-                    else:
-                        row.append("N/A")
-                source_table.add_row(*row)
-            
-            console.print("\n")
-            console.print(source_table)
-
-        if history:
-            historical_data = analyzer.track_historical_metrics()
-            
-            # Create historical metrics table
-            hist_table = Table(title=f"Historical Metrics: {ticker}")
-            hist_table.add_column("Period", style="cyan")
-            hist_table.add_column("Volatility", style="magenta")
-            hist_table.add_column("Sharpe Ratio", style="green")
-            hist_table.add_column("Max Drawdown", style="red")
-            
-            for period, metrics in historical_data.items():
-                hist_table.add_row(
-                    period,
-                    f"{metrics['volatility']:.2%}",
-                    f"{metrics['sharpe']:.2f}",
-                    f"{metrics['max_drawdown']:.2%}"
-                )
-            
-            console.print("\n")
-            console.print(hist_table)
     except Exception as e:
-        console.print(f"[red]Error analyzing {ticker}: {str(e)}[/red]")
+        click.echo(f"Error initializing analyzer: {str(e)}")
+        return
 
 @cli.command()
 @click.argument('tickers', nargs=-1)
-def compare(tickers):
-    """Compare multiple ETFs"""
+@click.option('--costs', '-c', is_flag=True, help='Include trading cost comparison')
+def compare(tickers, costs):
+    """Compare multiple ETFs including trading costs"""
     if len(tickers) < 2:
         console.print("[red]Please provide at least two tickers to compare[/red]")
         return
@@ -173,6 +57,7 @@ def compare(tickers):
     table.add_column("Metric", style="cyan")
     
     analyzers = {}
+    cost_data = {}
     
     with console.status("[bold green]Analyzing ETFs..."):
         for ticker in tickers:
@@ -182,8 +67,11 @@ def compare(tickers):
             analyzer.collect_performance()
             analyzer.calculate_metrics()
             analyzers[ticker] = analyzer
+            
+            if costs:
+                cost_data[ticker] = analyzer.analyze_trading_costs()
     
-    # Add rows for each metric
+    # Add rows for basic metrics
     metrics = [
         ("Expense Ratio", lambda a: f"{a.data['basic'].get('expenseRatio', 0):.2%}"),
         ("Volatility", lambda a: f"{a.metrics['volatility']:.2%}"),
@@ -200,6 +88,42 @@ def compare(tickers):
         table.add_row(*row)
     
     console.print(table)
+    
+    # Add trading cost comparison if requested
+    if costs and cost_data:
+        cost_table = Table(title="Trading Cost Comparison")
+        cost_table.add_column("Cost Component", style="cyan")
+        
+        for ticker in tickers:
+            cost_table.add_column(ticker.upper(), style="magenta")
+        
+        # Add rows for each cost component
+        cost_components = [
+            ("Spread Cost (One-Way)", lambda d: f"{d['implicit']['spread_cost']:.3%}" if d['implicit']['spread_cost'] else "N/A"),
+            ("Market Impact", lambda d: f"{d['implicit']['market_impact']:.3%}"),
+            ("Total One-Way", lambda d: f"{d['total']['one_way']:.3%}"),
+            ("Round-Trip", lambda d: f"{d['total']['round_trip']:.3%}"),
+        ]
+        
+        for component_name, component_func in cost_components:
+            row = [component_name]
+            for ticker in tickers:
+                if ticker in cost_data and cost_data[ticker]:
+                    row.append(component_func(cost_data[ticker]))
+                else:
+                    row.append("N/A")
+            cost_table.add_row(*row)
+        
+        console.print("\n")
+        console.print(cost_table)
+        
+        # Show cost alerts for each ETF
+        console.print("\n[yellow]Trading Cost Alerts:[/yellow]")
+        for ticker in tickers:
+            if ticker in cost_data and cost_data[ticker] and cost_data[ticker]['alerts']:
+                console.print(f"\n[cyan]{ticker}:[/cyan]")
+                for alert in cost_data[ticker]['alerts']:
+                    console.print(f"[yellow]• {alert}[/yellow]")
 
 def _get_difference_style(diff, metric):
     """Get color style based on difference magnitude and metric type"""

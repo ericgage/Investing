@@ -47,4 +47,7 @@ coverage.xml
 .hypothesis/ 
 
 # Cache directory
-.cache/ 
+.cache/ .DS_Store
+.DS_Store?
+**/.DS_Store
+etfa/

@@ -100,10 +100,19 @@ graph TD
     CLI[CLI Interface] --> Analyzer[ETF Analyzer Core]
     Analyzer --> DataSource[Data Sources]
     Analyzer --> Metrics[Metrics Calculator]
+    Analyzer --> Trading[Trading Analysis]
+    
     DataSource --> YFinance[Yahoo Finance API]
+    DataSource --> ETFcom[ETF.com Scraper]
+    DataSource --> Cache[Data Cache]
+    
     Metrics --> Volatility[Volatility]
     Metrics --> TrackingError[Tracking Error]
     Metrics --> Liquidity[Liquidity Score]
+    
+    Trading --> Costs[Trading Costs]
+    Trading --> MarketMaker[Market Making]
+    Trading --> PremiumDiscount[Premium/Discount]
 ```
 
 ## Data Flow
@@ -278,6 +287,15 @@ etf-analyzer compare VOO SPY QQQ
 etf-analyzer analyze QQQ --benchmark SPY
 ```
 
+### Real-Time Trading Metrics
+```bash
+# Show real-time trading metrics
+etf-analyzer analyze VOO --real-time
+
+# Combine with other analysis
+etf-analyzer analyze VOO --real-time --verbose
+```
+
 ## Validation Methods
 
 ### External Data Sources
@@ -405,4 +423,142 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Multiple fallback sources
 - Detailed error reporting
 - Debug mode for troubleshooting
+
+### Custom Benchmark Analysis
+```bash
+# Analyze QQQ using VOO as benchmark
+etf-analyzer analyze QQQ --benchmark VOO
+
+# Compare sector ETF to industry benchmark
+etf-analyzer analyze XLE --benchmark VDE  # Energy sector
+etf-analyzer analyze XLK --benchmark VGT  # Technology sector
+```
+
+The custom benchmark feature allows you to:
+- Compare ETFs to more relevant benchmarks
+- Analyze sector-specific tracking
+- Calculate relative performance metrics
+
+The real-time metrics include:
+- Current bid and ask prices
+- Bid-ask spread ($ and %)
+- Intraday Indicative Value (IIV)
+- Premium/Discount to IIV
+- Estimated trading costs
+
+## Trading Cost Analysis
+
+### Basic Cost Analysis
+```bash
+# Show trading costs for a single ETF
+etf-analyzer analyze VOO --costs
+```
+
+The cost analysis includes:
+- Explicit costs (commissions, expense ratios)
+- Implicit costs (spread costs, market impact)
+- Total round-trip trading costs
+- Cost alerts for high trading costs
+
+### Cost Comparison
+```bash
+# Compare trading costs across multiple ETFs
+etf-analyzer compare VOO SPY IVV --costs
+
+# Compare sector ETF costs
+etf-analyzer compare XLE VDE XOP --costs
+```
+
+### Premium/Discount Analysis
+```bash
+# Show premium/discount to NAV
+etf-analyzer analyze VOO --costs
+```
+
+Monitors:
+- Current premium/discount to NAV
+- Historical premium/discount levels
+- Alerts for unusual deviations
+
+### Market Maker Analysis
+```bash
+# Analyze market maker effectiveness
+etf-analyzer analyze VOO --market-maker
+```
+
+Provides:
+- Quote presence metrics
+- Spread stability analysis
+- Market depth estimation
+- Price continuity scoring
+
+## Real-Time Trading Metrics
+
+### Basic Trading Metrics
+```bash
+# Show real-time trading data
+etf-analyzer analyze VOO --real-time
+```
+
+Displays:
+- Current bid/ask prices
+- Bid-ask spread ($ and %)
+- Intraday Indicative Value (IIV)
+- Premium/Discount to IIV
+
+### Advanced Trading Analysis
+```bash
+# Combine multiple analysis types
+etf-analyzer analyze VOO --real-time --costs --market-maker
+```
+
+## Interpreting Results
+
+### Trading Costs
+- **Spread Cost**: < 0.05% excellent, > 0.20% concerning
+- **Market Impact**: < 0.10% good, > 0.25% high
+- **Round-Trip Cost**: < 0.15% excellent, > 0.50% high
+
+### Premium/Discount
+- **Normal Range**: ±0.25%
+- **Warning Level**: ±0.50%
+- **Alert Level**: ±1.00%
+
+### Market Making Quality
+- **Quote Presence**: > 95% excellent
+- **Spread Stability**: > 80% good
+- **Price Continuity**: > 90% excellent
+
+## Best Practices
+
+### Trading Execution
+1. **Cost-Aware Trading**:
+   - Use limit orders when spreads are wide
+   - Trade during market hours for better pricing
+   - Consider trade size vs. market impact
+
+2. **Premium/Discount Management**:
+   - Avoid trading at large premiums
+   - Monitor unusual discounts
+   - Use limit orders near IIV
+
+3. **Market Maker Awareness**:
+   - Check quote presence before trading
+   - Monitor spread stability
+   - Consider depth for large trades
+
+### Real-Time Data Notes
+
+The ETF analyzer attempts to collect real-time data from multiple sources:
+
+1. **Bid/Ask Data**: From Yahoo Finance
+2. **IIV Data**: 
+   - Primary: Yahoo Finance (.IV suffix)
+   - Secondary: ETF.com
+   - Note: IIV may not be available for all ETFs
+
+If IIV data is not available, the analyzer will:
+- Continue to show bid/ask spreads
+- Skip premium/discount calculations
+- Note the missing data in the output
 

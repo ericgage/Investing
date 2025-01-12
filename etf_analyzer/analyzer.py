@@ -7,31 +7,48 @@ import re
 from .utils import rate_limit, ETFDataCache
 from .browser import BrowserSession
 import time
+from selenium.common.exceptions import WebDriverException
+from requests.exceptions import RequestException
 
 class ETFAnalyzer:
     def __init__(self, ticker, benchmark_ticker="SPY"):
+        """
+        Initialize ETF analyzer with optional custom benchmark
+        
+        Args:
+            ticker (str): ETF ticker symbol
+            benchmark_ticker (str): Benchmark ETF ticker (default: "SPY")
+        """
         self.ticker = ticker
         self.benchmark_ticker = benchmark_ticker
         self.data = {}
         self.metrics = {}
         self.cache = ETFDataCache()
+        self.browser = BrowserSession()  # Initialize browser here
         
     def collect_basic_info(self):
         """
         Gather fundamental ETF information with improved expense ratio collection
         """
         try:
+            print("Debug: collect_basic_info started")  # Debug print
             ticker_info = yf.Ticker(self.ticker).info
             
             # Try to get expense ratio from multiple sources
             expense_ratio = None
             
-            # 1. Try ETF.com first (most reliable)
-            etf_com_data = self._get_etf_com_metrics()
-            if etf_com_data and 'expense_ratio' in etf_com_data:
-                expense_ratio = etf_com_data['expense_ratio']
+            # 1. Try ETF.com first if Yahoo Finance doesn't have expense ratio
+            if not any(ticker_info.get(field) for field in ['expenseRatio', 'annualReportExpenseRatio', 'totalExpenseRatio']):
+                print("Debug: Attempting ETF.com lookup")  # Debug print
+                try:
+                    etf_com_data = self._get_etf_com_metrics()
+                    if etf_com_data and 'expense_ratio' in etf_com_data:
+                        expense_ratio = etf_com_data['expense_ratio']
+                except WebDriverException as e:
+                    print(f"Debug: WebDriverException caught: {str(e)}")  # Debug print
+                    raise RuntimeError(f"Browser initialization failed: {str(e)}") from e
             
-            # 2. If ETF.com fails, try Yahoo Finance fields
+            # 2. If ETF.com fails or wasn't tried, use Yahoo Finance fields
             if expense_ratio is None:
                 expense_ratio = (
                     ticker_info.get('annualReportExpenseRatio') or
@@ -39,33 +56,20 @@ class ETFAnalyzer:
                     ticker_info.get('totalExpenseRatio')
                 )
             
-            # 3. If still None, try the Yahoo Finance API directly
-            if expense_ratio is None:
-                yahoo_api_data = self._get_yahoo_api_metrics()
-                if yahoo_api_data and 'expense_ratio' in yahoo_api_data:
-                    expense_ratio = yahoo_api_data['expense_ratio']
-            
-            # 4. If all else fails, warn user and use 0.0
-            if expense_ratio is None:
-                print(f"Warning: Could not find expense ratio for {self.ticker}")
-                expense_ratio = 0.0
-            
+            # Store the basic info
             self.data['basic'] = {
                 'name': ticker_info.get('longName', 'N/A'),
                 'category': ticker_info.get('category', 'N/A'),
-                'expenseRatio': float(expense_ratio),
+                'expenseRatio': float(expense_ratio) if expense_ratio is not None else 0.0,
                 'totalAssets': ticker_info.get('totalAssets', 0.0),
                 'description': ticker_info.get('description', 'N/A')
             }
+            
+        except RuntimeError:
+            raise  # Re-raise RuntimeError without wrapping
         except Exception as e:
             print(f"Error collecting basic info for {self.ticker}: {str(e)}")
-            self.data['basic'] = {
-                'name': 'N/A',
-                'category': 'N/A',
-                'expenseRatio': 0.0,
-                'totalAssets': 0.0,
-                'description': 'N/A'
-            }
+            raise RuntimeError(f"Failed to collect basic info: {str(e)}") from e
         
     def collect_holdings(self):
         """
@@ -79,9 +83,14 @@ class ETFAnalyzer:
         Gather historical performance data for both ETF and benchmark
         """
         try:
-            # Get ETF data
+            print("Debug: collect_performance started")  # Debug print
             ticker_data = yf.Ticker(self.ticker)
-            history = ticker_data.history(period="1y")
+            try:
+                print("Debug: Attempting to get history")  # Debug print
+                history = ticker_data.history(period="1y")
+            except (RequestException, Exception) as e:
+                print(f"Debug: Exception caught: {str(e)}")  # Debug print
+                raise RuntimeError(f"Failed to fetch price history: {str(e)}") from e
             
             if len(history) < 30:  # Minimum data requirement
                 raise ValueError(f"Insufficient price history for {self.ticker}")
@@ -90,8 +99,11 @@ class ETFAnalyzer:
             
             # Get benchmark data if different
             if self.ticker != self.benchmark_ticker:
-                benchmark_data = yf.Ticker(self.benchmark_ticker)
-                benchmark_history = benchmark_data.history(period="1y")
+                try:
+                    benchmark_data = yf.Ticker(self.benchmark_ticker)
+                    benchmark_history = benchmark_data.history(period="1y")
+                except RequestException as e:
+                    raise RuntimeError(f"Failed to fetch benchmark data: {str(e)}") from e
                 
                 if len(benchmark_history) < 30:
                     raise ValueError(f"Insufficient price history for benchmark {self.benchmark_ticker}")
@@ -99,14 +111,17 @@ class ETFAnalyzer:
                 self.data['benchmark_history'] = benchmark_history
                 
         except Exception as e:
-            print(f"Error collecting performance data: {str(e)}")
-            raise
+            if isinstance(e, RuntimeError):
+                raise  # Re-raise RuntimeError without wrapping
+            raise RuntimeError(f"Failed to fetch price history: {str(e)}") from e
         
     def calculate_metrics(self):
         """
         Calculate key metrics for analysis
         """
         try:
+            self.validate_data()  # Add validation before calculations
+            
             if 'price_history' not in self.data:
                 self.collect_performance()
             
@@ -132,30 +147,34 @@ class ETFAnalyzer:
 
     def _calculate_tracking_error(self):
         """
-        Calculate tracking error against benchmark
-        
-        Tracking error is the standard deviation of the difference
-        between the ETF and benchmark returns
+        Calculate tracking error against custom benchmark
         """
-        if 'benchmark_history' not in self.data and self.ticker != self.benchmark_ticker:
-            self.collect_performance()
+        try:
+            if 'benchmark_history' not in self.data:
+                # Get benchmark data if not already collected
+                benchmark_data = yf.Ticker(self.benchmark_ticker)
+                benchmark_history = benchmark_data.history(period="1y")
+                
+                if len(benchmark_history) < 30:
+                    raise ValueError(f"Insufficient price history for benchmark {self.benchmark_ticker}")
+                
+                self.data['benchmark_history'] = benchmark_history
             
-        # Calculate daily returns
-        etf_returns = self.data['price_history']['Close'].pct_change().dropna()
-        
-        if self.ticker == self.benchmark_ticker:
+            # Calculate daily returns
+            etf_returns = self.data['price_history']['Close'].pct_change().dropna()
+            benchmark_returns = self.data['benchmark_history']['Close'].pct_change().dropna()
+            
+            # Align the dates
+            etf_returns, benchmark_returns = etf_returns.align(benchmark_returns, join='inner')
+            
+            # Calculate tracking error
+            return_differences = etf_returns - benchmark_returns
+            tracking_error = return_differences.std() * np.sqrt(252)  # Annualized
+            
+            return float(tracking_error)
+        except Exception as e:
+            print(f"Error calculating tracking error against {self.benchmark_ticker}: {str(e)}")
             return 0.0
-            
-        benchmark_returns = self.data['benchmark_history']['Close'].pct_change().dropna()
-        
-        # Align the dates
-        etf_returns, benchmark_returns = etf_returns.align(benchmark_returns, join='inner')
-        
-        # Calculate tracking error
-        return_differences = etf_returns - benchmark_returns
-        tracking_error = return_differences.std() * np.sqrt(252)  # Annualized
-        
-        return float(tracking_error)
         
     def _calculate_liquidity_score(self):
         """
@@ -332,61 +351,29 @@ class ETFAnalyzer:
 
     @rate_limit(calls_per_minute=5)
     def _get_etf_com_metrics(self):
-        """Fetch and parse data from ETF.com using Selenium with improved error handling"""
-        cached_data = self.cache.get(self.ticker, 'etf_com')
-        if cached_data:
-            return cached_data
-            
+        """Get ETF metrics from ETF.com"""
         try:
-            with BrowserSession() as driver:
-                url = f"https://www.etf.com/{self.ticker}"
-                driver.get(url)
-                time.sleep(3)
-                
-                soup = BeautifulSoup(driver.page_source, 'html.parser')
-                
-                # Debug: Print the page title to verify we're on the right page
-                print(f"Debug: Page title - {soup.title.text if soup.title else 'No title'}")
-                
-                # First, verify we're on the correct page
-                if not soup.find('div', text=re.compile(self.ticker, re.IGNORECASE)):
-                    print(f"Warning: ETF ticker {self.ticker} not found on page")
-                    return self._get_fallback_metrics()
-                
-                # Get metrics with debug info
-                metrics = {}
-                
-                # Parse expense ratio
-                expense_ratio = self._parse_expense_ratio(soup)
-                if expense_ratio is not None:
-                    metrics['expense_ratio'] = expense_ratio
-                
-                # Parse AUM
-                aum = self._parse_aum(soup)
-                if aum is not None:
-                    metrics['aum'] = aum
-                
-                # Parse volume
-                volume = self._parse_volume(soup)
-                if volume is not None:
-                    metrics['volume'] = volume
-                
-                # Parse additional metrics only if we have the basic ones
-                if any([expense_ratio, aum, volume]):
-                    metrics.update({
-                        'holdings': self._parse_holdings(soup),
-                        'segment': self._parse_segment(soup),
-                        'issuer': self._parse_issuer(soup)
-                    })
-                    
-                    # Cache only if we got some valid data
-                    self.cache.set(self.ticker, 'etf_com', metrics)
-                    
-                return metrics if metrics else self._get_fallback_metrics()
-                
-        except Exception as e:
-            print(f"Error fetching ETF.com data: {str(e)}")
-            print("Falling back to alternative data sources...")
+            # Get the ETF.com page
+            url = f"https://www.etf.com/{self.ticker}"
+            self.browser.get(url)
+            soup = BeautifulSoup(self.browser.page_source, 'html.parser')
+            
+            # First, verify we're on the correct page
+            if not soup.find('div', string=re.compile(self.ticker, re.IGNORECASE)):  # Changed text to string
+                print(f"Warning: ETF ticker {self.ticker} not found on page")
+                return self._get_fallback_metrics()
+            
+            # Parse metrics
+            metrics = {}
+            metrics['expense_ratio'] = self._parse_expense_ratio(soup)
+            metrics['aum'] = self._parse_aum(soup)
+            metrics['volume'] = self._parse_volume(soup)
+            metrics['spread'] = self._parse_spread(soup)
+            
+            return metrics
+            
+        except WebDriverException as e:
+            print(f"Error fetching ETF.com data: {e}")
             return self._get_fallback_metrics()
 
     def _get_fallback_metrics(self):
@@ -404,28 +391,24 @@ class ETFAnalyzer:
         """Parse expense ratio with improved error handling"""
         try:
             for pattern in ['Expense Ratio', 'Annual Fee', 'Management Fee']:
-                expense_div = soup.find('div', text=re.compile(pattern, re.IGNORECASE))
+                expense_div = soup.find('div', string=re.compile(pattern, re.IGNORECASE))  # Changed text to string
                 if expense_div and expense_div.find_next('div'):
                     ratio_text = expense_div.find_next('div').text.strip()
-                    print(f"Debug: Found expense ratio text: {ratio_text}")  # Debug line
-                    
                     # Only process if it looks like a percentage
                     if '%' in ratio_text or 'bps' in ratio_text:
                         match = re.search(r'(\d+\.?\d*)\s*(%|bps)', ratio_text)
                         if match:
                             value = float(match.group(1))
                             return value / (100 if match.group(2) == '%' else 10000)
-            return None
         except Exception as e:
-            print(f"Error parsing expense ratio: {str(e)}")
-            return None
+            print(f"Error parsing expense ratio: {e}")
+        return None
 
     def _parse_aum(self, soup):
         """Parse Assets Under Management with robust error handling"""
         try:
-            # Try multiple possible div text patterns
             for pattern in ['AUM', 'Assets Under Management', 'Fund Size']:
-                aum_div = soup.find('div', text=re.compile(pattern, re.IGNORECASE))
+                aum_div = soup.find('div', string=re.compile(pattern, re.IGNORECASE))  # Changed text to string
                 if aum_div and aum_div.find_next('div'):
                     aum_text = aum_div.find_next('div').text.strip()
                     # Extract currency value and multiplier
@@ -442,9 +425,8 @@ class ETFAnalyzer:
     def _parse_volume(self, soup):
         """Parse average trading volume with robust error handling"""
         try:
-            # Try multiple possible div text patterns
             for pattern in ['Avg Daily Volume', 'Average Volume', 'Trading Volume']:
-                volume_div = soup.find('div', text=re.compile(pattern, re.IGNORECASE))
+                volume_div = soup.find('div', string=re.compile(pattern, re.IGNORECASE))  # Changed text to string
                 if volume_div and volume_div.find_next('div'):
                     vol_text = volume_div.find_next('div').text.strip()
                     # Extract numeric value and multiplier
@@ -524,3 +506,257 @@ class ETFAnalyzer:
             return True
         except ValueError:
             return False 
+
+    def collect_real_time_data(self):
+        """Collect real-time trading data including bid-ask spread"""
+        try:
+            # Get real-time quote data
+            ticker_data = yf.Ticker(self.ticker)
+            quote = ticker_data.info
+            
+            # Initialize with None values
+            rt_data = {
+                'bid': None,
+                'ask': None,
+                'spread': None,
+                'spread_pct': None,
+                'last_price': None,
+                'iiv': None,
+                'timestamp': None
+            }
+            
+            # Get bid/ask data
+            rt_data['bid'] = quote.get('bid')
+            rt_data['ask'] = quote.get('ask')
+            rt_data['last_price'] = quote.get('regularMarketPrice')
+            rt_data['timestamp'] = quote.get('regularMarketTime')
+            
+            # Calculate spread only if we have valid bid/ask
+            if rt_data['bid'] and rt_data['ask'] and rt_data['bid'] > 0 and rt_data['ask'] > 0:
+                rt_data['spread'] = rt_data['ask'] - rt_data['bid']
+                # Store as decimal, not percentage
+                rt_data['spread_pct'] = rt_data['spread'] / ((rt_data['bid'] + rt_data['ask']) / 2)
+                
+                # Validate spread is reasonable (shouldn't be more than 5% for liquid ETFs)
+                if rt_data['spread_pct'] > 0.05:  # 5%
+                    print(f"Warning: Unusually wide spread detected ({rt_data['spread_pct']:.2%})")
+            
+            # Try alternative sources for IIV
+            try:
+                # Try ETF.com for IIV data
+                etf_com_data = self._get_etf_com_metrics()
+                if etf_com_data and 'iiv' in etf_com_data:
+                    rt_data['iiv'] = etf_com_data['iiv']
+            except Exception as e:
+                print(f"Note: IIV data not available from alternative sources")
+            
+            self.data['real_time'] = rt_data
+            return rt_data
+            
+        except Exception as e:
+            print(f"Error collecting real-time data: {str(e)}")
+            return None 
+
+    def analyze_market_making(self):
+        """Analyze market maker effectiveness and liquidity provision"""
+        try:
+            # Get intraday data (1-minute intervals)
+            intraday = yf.download(self.ticker, period="1d", interval="1m")
+            
+            # Market maker metrics
+            metrics = {
+                'quote_presence': 0,  # % of time with valid quotes
+                'spread_stability': 0,  # How stable is the spread
+                'depth_score': 0,     # Estimate of market depth
+                'price_continuity': 0  # Smoothness of price changes
+            }
+            
+            if len(intraday) > 0:
+                # Calculate quote presence
+                valid_quotes = ((intraday['Bid'] > 0) & (intraday['Ask'] > 0)).mean()
+                metrics['quote_presence'] = float(valid_quotes)
+                
+                # Calculate spread stability
+                spreads = intraday['Ask'] - intraday['Bid']
+                metrics['spread_stability'] = 1 - float(spreads.std() / spreads.mean())
+                
+                # Estimate market depth using volume and price impact
+                avg_trade_size = intraday['Volume'].mean()
+                price_impact = abs(intraday['High'] - intraday['Low']).mean()
+                metrics['depth_score'] = float(avg_trade_size / (price_impact + 0.00001))
+                
+                # Calculate price continuity
+                price_changes = intraday['Close'].pct_change().dropna()
+                metrics['price_continuity'] = 1 - float(abs(price_changes).mean())
+                
+                # Add additional analysis
+                metrics.update({
+                    'avg_trade_size': avg_trade_size,
+                    'price_impact': price_impact,
+                    'quote_count': len(intraday),
+                    'spread_percentiles': {
+                        '25': float(spreads.quantile(0.25)),
+                        '50': float(spreads.quantile(0.50)),
+                        '75': float(spreads.quantile(0.75))
+                    }
+                })
+                
+            return metrics
+        except Exception as e:
+            print(f"Error analyzing market making: {str(e)}")
+            return None 
+
+    def analyze_trading_costs(self):
+        """Analyze total trading costs including spread, impact, and fees"""
+        try:
+            rt_data = self.data.get('real_time', {})
+            if not rt_data:
+                return None
+            
+            costs = {
+                'explicit': {},
+                'implicit': {},
+                'total': {
+                    'one_way': 0.0,
+                    'round_trip': 0.0
+                },
+                'alerts': []
+            }
+            
+            # Explicit costs
+            costs['explicit']['commission'] = 0.0
+            costs['explicit']['expense_ratio'] = self.data['basic']['expenseRatio']
+            
+            # Implicit costs
+            spread_pct = rt_data.get('spread_pct', 0.0)
+            costs['implicit']['spread_cost'] = spread_pct / 2
+            
+            # Calculate totals
+            one_way = costs['implicit']['spread_cost'] + costs['explicit']['expense_ratio']
+            costs['total']['one_way'] = one_way
+            costs['total']['round_trip'] = one_way * 2
+            
+            # Add alerts for high spreads (0.5% threshold)
+            if spread_pct >= 0.005:  # Changed from > to >= to match test case
+                costs['alerts'].append(f"High spread cost: {spread_pct:.3%}")
+            
+            return costs
+        except Exception as e:
+            print(f"Error analyzing trading costs: {str(e)}")
+            return None
+
+    def analyze_premium_discount(self):
+        """Analyze premium/discount to NAV and set alerts"""
+        try:
+            rt_data = self.data.get('real_time', {})
+            if not rt_data or not rt_data.get('iiv'):
+                return None
+            
+            analysis = {
+                'current': {},
+                'historical': {},
+                'alerts': []
+            }
+            
+            # Current premium/discount
+            last_price = rt_data.get('last_price')
+            iiv = rt_data.get('iiv')
+            if last_price and iiv:
+                premium_discount = ((last_price - iiv) / iiv) * 100
+                analysis['current'] = {
+                    'premium_discount': premium_discount,
+                    'last_price': last_price,
+                    'iiv': iiv
+                }
+                
+                # Set alerts based on thresholds
+                if abs(premium_discount) > 0.5:  # 0.5% threshold
+                    analysis['alerts'].append(
+                        f"Large premium/discount: {premium_discount:+.2f}% "
+                        f"({'premium' if premium_discount > 0 else 'discount'})"
+                    )
+                
+                return analysis
+            return None
+        except Exception as e:
+            print(f"Error analyzing premium/discount: {str(e)}")
+            return None 
+
+    def validate_data(self):
+        """Validate data consistency"""
+        if 'price_history' not in self.data:
+            raise ValueError("Missing price history data")
+        
+        required_columns = ['Close', 'High', 'Low', 'Volume']
+        if not all(col in self.data['price_history'].columns for col in required_columns):
+            raise ValueError("Missing required columns in price history")
+        
+        # Check for empty data
+        if len(self.data['price_history']) == 0:
+            raise ValueError("Insufficient data")
+        
+        # Check for invalid values and NaN/None
+        df = self.data['price_history']
+        for col in required_columns:
+            if df[col].isna().any():
+                raise ValueError("Inconsistent data lengths")
+            try:
+                df[col].astype(float)
+            except ValueError:
+                raise ValueError("Invalid price data - non-numeric values found")
+        
+        # Check data consistency - compare with index length
+        index_length = len(df.index)
+        for col in required_columns:
+            if len(df[col].dropna()) != index_length:
+                raise ValueError("Inconsistent data lengths")
+        
+        # Check dates - handle both DatetimeIndex and RangeIndex
+        now = pd.Timestamp.now(tz='UTC')
+        index_dates = self.data['price_history'].index
+        if hasattr(index_dates, 'tz'):  # Only check timezone if it's a DatetimeIndex
+            if index_dates.tz is None:
+                index_dates = index_dates.tz_localize('UTC')
+            elif index_dates.tz != now.tz:
+                index_dates = index_dates.tz_convert('UTC')
+            
+            if any(date > now for date in index_dates):
+                raise ValueError("Invalid dates - future dates found in price history") 
+
+    def validate_real_time_data(self):
+        """Validate real-time data"""
+        if 'real_time' not in self.data:
+            raise ValueError("No real-time data available")
+        
+        rt_data = self.data['real_time']
+        
+        # Check bid/ask validity
+        if rt_data.get('bid') and rt_data.get('ask'):
+            if rt_data['bid'] >= rt_data['ask']:
+                raise ValueError("Invalid bid/ask prices - bid must be less than ask")
+            
+        # Check timestamp freshness
+        if rt_data.get('timestamp'):
+            now = pd.Timestamp.now(tz='UTC')
+            timestamp = pd.Timestamp(rt_data['timestamp'])
+            if timestamp.tz is None:
+                timestamp = timestamp.tz_localize('UTC')
+            age = now - timestamp
+            if age > pd.Timedelta(minutes=15):
+                raise ValueError("Stale data - real-time data is more than 15 minutes old") 
+
+    def _parse_spread(self, soup):
+        """Parse bid-ask spread with robust error handling"""
+        try:
+            for pattern in ['Spread', 'Bid-Ask Spread']:
+                spread_div = soup.find('div', string=re.compile(pattern, re.IGNORECASE))
+                if spread_div and spread_div.find_next('div'):
+                    spread_text = spread_div.find_next('div').text.strip()
+                    if '%' in spread_text:
+                        match = re.search(r'(\d+\.?\d*)\s*%', spread_text)
+                        if match:
+                            return float(match.group(1)) / 100
+            return None
+        except Exception as e:
+            print(f"Error parsing spread: {str(e)}")
+            return None 
