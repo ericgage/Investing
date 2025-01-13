@@ -118,3 +118,51 @@ def mock_analyzer(monkeypatch, mock_browser):
         self.cache = MockETFDataCache()
     
     monkeypatch.setattr('etf_analyzer.analyzer.ETFAnalyzer.__init__', mock_init) 
+
+@pytest.fixture(autouse=True)
+def mock_yfinance(monkeypatch):
+    """Mock yfinance for all tests"""
+    # Create a single date range to be used by all history calls
+    end_date = pd.Timestamp.now(tz='UTC')
+    dates = pd.date_range(end=end_date, periods=100)
+    
+    class MockTicker:
+        def __init__(self, ticker):
+            self.ticker = ticker
+            self.info = {
+                'longName': 'Test ETF',
+                'category': 'Test Category',
+                'expenseRatio': 0.0003,
+                'totalAssets': 1000000000 if ticker == 'SPY' else 100000000
+            }
+            
+        def history(self, *args, **kwargs):
+            # Different price patterns for different ETFs
+            if self.ticker == 'QQQ':
+                # QQQ has more volatile returns
+                prices = [100.0 * (1 + i * 0.02) for i in range(100)]
+                volume = 500000
+            else:
+                # SPY and others have steady prices
+                prices = [100.0] * 100
+                volume = 1000000 if self.ticker == 'SPY' else 100000
+                
+            return pd.DataFrame({
+                'Close': prices,
+                'High': [p * 1.01 for p in prices],
+                'Low': [p * 0.99 for p in prices],
+                'Volume': [volume] * 100
+            }, index=dates)  # Use the shared date range
+    
+    monkeypatch.setattr('yfinance.Ticker', MockTicker) 
+
+@pytest.fixture(autouse=True)
+def mock_console(monkeypatch):
+    """Mock rich console for tests"""
+    class MockConsole:
+        def print(self, table):
+            # Convert rich table to plain text for tests
+            for row in table.rows:
+                print(f"{row[0]}: {row[1]}")
+    
+    monkeypatch.setattr('rich.console.Console', lambda: MockConsole()) 

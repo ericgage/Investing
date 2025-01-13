@@ -83,16 +83,17 @@ class ETFAnalyzer:
         Gather historical performance data for both ETF and benchmark
         """
         try:
-            print("Debug: collect_performance started")  # Debug print
+            print("Debug: collect_performance started")
             ticker_data = yf.Ticker(self.ticker)
             try:
-                print("Debug: Attempting to get history")  # Debug print
+                print("Debug: Attempting to get history")
                 history = ticker_data.history(period="1y")
+                print(f"Debug: Got {len(history)} days of history")
             except (RequestException, Exception) as e:
-                print(f"Debug: Exception caught: {str(e)}")  # Debug print
+                print(f"Debug: Exception caught: {str(e)}")
                 raise RuntimeError(f"Failed to fetch price history: {str(e)}") from e
             
-            if len(history) < 30:  # Minimum data requirement
+            if len(history) < 30:
                 raise ValueError(f"Insufficient price history for {self.ticker}")
             
             self.data['price_history'] = history
@@ -100,16 +101,25 @@ class ETFAnalyzer:
             # Get benchmark data if different
             if self.ticker != self.benchmark_ticker:
                 try:
+                    print("Debug: Getting benchmark history")
                     benchmark_data = yf.Ticker(self.benchmark_ticker)
-                    benchmark_history = benchmark_data.history(period="1y")
+                    self.data['benchmark_history'] = benchmark_data.history(period="1y")
+                    print(f"Debug: Got {len(self.data['benchmark_history'])} days of benchmark history")
                 except RequestException as e:
                     raise RuntimeError(f"Failed to fetch benchmark data: {str(e)}") from e
                 
-                if len(benchmark_history) < 30:
+                if len(self.data['benchmark_history']) < 30:
                     raise ValueError(f"Insufficient price history for benchmark {self.benchmark_ticker}")
                 
-                self.data['benchmark_history'] = benchmark_history
+                # Ensure dates align
+                common_dates = history.index.intersection(self.data['benchmark_history'].index)
+                if len(common_dates) < 30:
+                    raise ValueError("Insufficient overlapping data between ETF and benchmark")
                 
+                self.data['price_history'] = history.loc[common_dates]
+                self.data['benchmark_history'] = self.data['benchmark_history'].loc[common_dates]
+                print(f"Debug: Aligned {len(common_dates)} days of data")
+            
         except Exception as e:
             if isinstance(e, RuntimeError):
                 raise  # Re-raise RuntimeError without wrapping
@@ -146,34 +156,44 @@ class ETFAnalyzer:
             raise
 
     def _calculate_tracking_error(self):
-        """
-        Calculate tracking error against custom benchmark
-        """
+        """Calculate tracking error against custom benchmark"""
         try:
+            if self.ticker == self.benchmark_ticker:
+                print("Debug: Same ticker as benchmark, returning 0")
+                return 0.0
+            
             if 'benchmark_history' not in self.data:
-                # Get benchmark data if not already collected
+                print("Debug: Getting benchmark history")
                 benchmark_data = yf.Ticker(self.benchmark_ticker)
                 benchmark_history = benchmark_data.history(period="1y")
-                
-                if len(benchmark_history) < 30:
-                    raise ValueError(f"Insufficient price history for benchmark {self.benchmark_ticker}")
-                
                 self.data['benchmark_history'] = benchmark_history
             
             # Calculate daily returns
             etf_returns = self.data['price_history']['Close'].pct_change().dropna()
             benchmark_returns = self.data['benchmark_history']['Close'].pct_change().dropna()
             
+            print(f"Debug: ETF returns mean: {etf_returns.mean():.4f}")
+            print(f"Debug: Benchmark returns mean: {benchmark_returns.mean():.4f}")
+            
             # Align the dates
             etf_returns, benchmark_returns = etf_returns.align(benchmark_returns, join='inner')
+            
+            print(f"Debug: Number of aligned returns: {len(etf_returns)}")
+            
+            if len(etf_returns) == 0 or len(benchmark_returns) == 0:
+                print("Debug: No aligned returns, returning 0")
+                return 0.0
             
             # Calculate tracking error
             return_differences = etf_returns - benchmark_returns
             tracking_error = return_differences.std() * np.sqrt(252)  # Annualized
             
+            print(f"Debug: Return differences std: {return_differences.std():.4f}")
+            print(f"Debug: Tracking error: {tracking_error:.4f}")
+            
             return float(tracking_error)
         except Exception as e:
-            print(f"Error calculating tracking error against {self.benchmark_ticker}: {str(e)}")
+            print(f"Error calculating tracking error: {str(e)}")
             return 0.0
         
     def _calculate_liquidity_score(self):
