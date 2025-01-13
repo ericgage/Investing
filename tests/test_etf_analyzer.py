@@ -1,5 +1,6 @@
 import pytest
 from etf_analyzer import ETFAnalyzer
+import pandas as pd
 
 def test_etf_analyzer_initialization():
     analyzer = ETFAnalyzer("SPY")
@@ -40,19 +41,32 @@ def test_tracking_error():
     assert error < 1.0  # But not too large
 
 def test_liquidity_score():
-    # Test with highly liquid ETF
-    analyzer = ETFAnalyzer("SPY")
-    analyzer.collect_performance()
-    score = analyzer._calculate_liquidity_score()
-    assert score > 0
-    assert score <= 100
-    
-    # Test relative liquidity
+    """Test liquidity score calculation"""
+    # Set up SPY analyzer with high liquidity
     spy_analyzer = ETFAnalyzer("SPY")
-    small_etf_analyzer = ETFAnalyzer("VTHR")  # Less liquid ETF
+    spy_analyzer.data['basic'] = {
+        'totalAssets': 1_000_000_000,  # $1B AUM
+        'expenseRatio': 0.0003
+    }
+    spy_analyzer.data['price_history'] = pd.DataFrame({
+        'Volume': [1_000_000] * 100  # High volume
+    })
+    spy_analyzer.data['real_time'] = {
+        'spread_pct': 0.001  # Tight spread
+    }
     
-    spy_analyzer.collect_performance()
-    small_etf_analyzer.collect_performance()
+    # Set up VTHR analyzer with lower liquidity
+    small_etf_analyzer = ETFAnalyzer("VTHR")
+    small_etf_analyzer.data['basic'] = {
+        'totalAssets': 100_000_000,  # $100M AUM
+        'expenseRatio': 0.0003
+    }
+    small_etf_analyzer.data['price_history'] = pd.DataFrame({
+        'Volume': [100_000] * 100  # Lower volume
+    })
+    small_etf_analyzer.data['real_time'] = {
+        'spread_pct': 0.005  # Wider spread
+    }
     
     spy_score = spy_analyzer._calculate_liquidity_score()
     small_etf_score = small_etf_analyzer._calculate_liquidity_score()

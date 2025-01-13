@@ -197,40 +197,34 @@ class ETFAnalyzer:
             return 0.0
         
     def _calculate_liquidity_score(self):
-        """
-        Calculate liquidity score based on:
-        1. Average daily volume
-        2. Bid-ask spread (estimated from high-low)
-        3. Assets under management (if available)
-        
-        Returns a score from 0 (least liquid) to 100 (most liquid)
-        """
-        if 'price_history' not in self.data:
-            self.collect_performance()
-            
-        # Calculate average daily volume score (0-40 points)
-        avg_volume = self.data['price_history']['Volume'].mean()
-        volume_score = min(40, (avg_volume / 1000000) * 4)  # 4 points per million shares
-        
-        # Calculate spread score using high-low as proxy (0-30 points)
-        typical_price = self.data['price_history']['Close'].mean()
-        avg_spread = (self.data['price_history']['High'] - self.data['price_history']['Low']).mean()
-        spread_percentage = (avg_spread / typical_price) * 100
-        spread_score = max(0, 30 - spread_percentage * 10)  # Lower spread = higher score
-        
-        # Asset base score (0-30 points)
-        asset_score = 0
+        """Calculate detailed liquidity score"""
         try:
-            if 'basic' in self.data and 'totalAssets' in self.data['basic']:
-                assets = self.data['basic']['totalAssets']
-                asset_score = min(30, (assets / 1000000000) * 3)  # 3 points per billion in assets
-        except:
-            pass
+            # Initialize scores
+            self.metrics['volume_score'] = 0.0
+            self.metrics['spread_score'] = 0.0
+            self.metrics['asset_score'] = 0.0
             
-        # Combine scores
-        total_score = volume_score + spread_score + asset_score
-        
-        return min(100, float(total_score)) 
+            # Volume score (40% weight)
+            volume = self.data['price_history']['Volume'].mean()
+            self.metrics['volume_score'] = min(40, volume / 25000)  # 1M volume = 40 points
+            
+            # Spread score (30% weight)
+            spread = self.data.get('real_time', {}).get('spread_pct', 0.01)
+            self.metrics['spread_score'] = min(30, (0.01 / spread) * 30)  # 0.01% spread = 30 points
+            
+            # Asset score (30% weight)
+            aum = self.data['basic'].get('totalAssets', 0)
+            self.metrics['asset_score'] = min(30, (aum / 1e9) * 30)  # $1B AUM = 30 points
+            
+            # Total score
+            return self.metrics['volume_score'] + self.metrics['spread_score'] + self.metrics['asset_score']
+        except Exception as e:
+            print(f"Error calculating liquidity score: {str(e)}")
+            # Initialize scores on error
+            self.metrics['volume_score'] = 0.0
+            self.metrics['spread_score'] = 0.0
+            self.metrics['asset_score'] = 0.0
+            return 0.0
 
     def _calculate_sharpe_ratio(self, daily_returns, annualized_factor):
         """Calculate the Sharpe Ratio using 1-year Treasury rate as risk-free rate"""

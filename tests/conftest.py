@@ -34,21 +34,17 @@ def mock_etf_data():
             'description': 'Test ETF Description',
             'average_spread': 0.0002
         },
-        'real_time': {
-            'bid': 100.0,
-            'ask': 100.5,
-            'last_price': 100.25,
-            'iiv': 100.0,
-            'spread': 0.50,
-            'spread_pct': 0.005,
-            'timestamp': pd.Timestamp.now(tz='UTC')
-        },
         'price_history': pd.DataFrame({
             'Close': [100.0] * 100,
             'High': [101.0] * 100,
             'Low': [99.0] * 100,
             'Volume': [1000000] * 100
-        }, index=pd.date_range(start='2024-01-01', periods=100, tz='UTC'))
+        }, index=pd.date_range(start='2024-01-01', periods=100, tz='UTC')),
+        'real_time': {
+            'bid': 100.0,
+            'ask': 100.5,
+            'spread_pct': 0.005
+        }
     }
 
 @pytest.fixture
@@ -161,8 +157,57 @@ def mock_console(monkeypatch):
     """Mock rich console for tests"""
     class MockConsole:
         def print(self, table):
-            # Convert rich table to plain text for tests
+            output = []
             for row in table.rows:
-                print(f"{row[0]}: {row[1]}")
+                # Get style from row or cells
+                row_style = row.style or ""
+                cell_styles = [cell.style or "" for cell in row]
+                
+                # Format cells with styles
+                cells = []
+                for cell, style in zip(row, cell_styles):
+                    cell_text = str(cell)
+                    # Preserve existing rich markup if present
+                    if '[' in cell_text and ']' in cell_text:
+                        cells.append(cell_text)
+                    # Otherwise apply style
+                    elif style:
+                        cells.append(f"[{style}]{cell_text}[/{style}]")
+                    else:
+                        cells.append(cell_text)
+                
+                # Add row with style
+                if row_style:
+                    output.append(f"[{row_style}]{'|'.join(cells)}[/{row_style}]")
+                else:
+                    output.append('|'.join(cells))
+                
+            return "\n".join(output)
     
     monkeypatch.setattr('rich.console.Console', lambda: MockConsole()) 
+
+@pytest.fixture
+def mock_validation_data(monkeypatch):
+    def mock_validate_metrics(*args, **kwargs):
+        data = {
+            'Expense Ratio': {
+                'our_value': 0.0003,
+                'external_value': 0.0003,
+                'difference': 0.0000
+            },
+            'AUM': {
+                'our_value': 1_000_000_000,
+                'external_value': 1_200_000_000,
+                'difference': 0.20
+            },
+            'Volume': {
+                'our_value': 1_000_000,
+                'external_value': 2_000_000,
+                'difference': 1.00
+            }
+        }
+        print("\nDEBUG - Mock validation data:", data)  # Debug print
+        return data
+    
+    monkeypatch.setattr('etf_analyzer.analyzer.ETFAnalyzer.validate_metrics', mock_validate_metrics)
+    return mock_validate_metrics 
