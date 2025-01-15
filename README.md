@@ -1,118 +1,228 @@
-# ETF Analyzer
+# ETFA (ETF Analyzer)
 
-A Python package for analyzing Exchange-Traded Funds (ETFs), providing tools for gathering data, analyzing performance, and calculating key metrics.
+A command-line tool for analyzing and comparing ETFs with a focus on liquidity, trading costs, and performance metrics.
+
+## Features
+
+- Basic ETF information and metrics
+- Performance analysis with benchmark comparison
+- Liquidity scoring and trading cost analysis
+- Data validation against external sources
+- Historical performance tracking
+- Multi-ETF comparison
 
 ## Installation
 
-### Initial Setup
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/etf-analyzer.git
-cd etf-analyzer
-```
-
-2. Create and activate a virtual environment:
+1. Create and activate virtual environment:
 ```bash
 # Create virtual environment
-python3 -m venv etfa
+python -m venv etfa
 
-# Activate virtual environment
-# On macOS/Linux:
+# Activate on Unix/macOS
 source etfa/bin/activate
-# On Windows:
-etfa\Scripts\activate
+
+# Activate on Windows
+.\etfa\Scripts\activate
 ```
 
-3. Install the package:
+2. Install the package:
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Install package in development mode
+# Install in development mode
 pip install -e .
 ```
 
-### Browser Automation Setup
+## Resetting Environment
 
-The ETF analyzer uses browser automation for enhanced data collection. Follow these steps based on your operating system:
-
-#### macOS
-1. Install Chrome and ChromeDriver:
+If you need to reset your environment:
 ```bash
-# Using Homebrew
-brew install --cask chromium
-brew install chromedriver
-```
+# Deactivate current environment
+deactivate
 
-2. Remove security quarantine:
-```bash
-# Allow ChromeDriver
-xattr -d com.apple.quarantine /opt/homebrew/bin/chromedriver
+# Remove old environment
+rm -rf etfa/
 
-# If using Chrome, also allow it
-xattr -d com.apple.quarantine /Applications/Google\ Chrome.app
-```
+# Create fresh environment
+python -m venv etfa
+source etfa/bin/activate  # or .\etfa\Scripts\activate on Windows
 
-3. Additional Security Steps:
-   - Go to System Preferences > Security & Privacy > General
-   - Look for messages about ChromeDriver being blocked
-   - Click "Allow Anyway"
-
-#### Ubuntu/Debian
-```bash
-# Install Chrome and ChromeDriver
-sudo apt install chromium-browser chromium-chromedriver
-```
-
-#### Windows
-1. Download and install Chrome from google.com/chrome
-2. Download ChromeDriver from https://sites.google.com/chromium.org/driver/
-3. Add ChromeDriver to your system PATH
-
-### Updating the Package
-If you've made changes to the code or pulled updates:
-
-1. Ensure your virtual environment is activated:
-```bash
-source etfa/bin/activate  # macOS/Linux
-etfa\Scripts\activate     # Windows
-```
-
-2. Uninstall current version:
-```bash
-pip uninstall etf-analyzer
-```
-
-3. Reinstall the updated version:
-```bash
+# Reinstall package
 pip install -e .
 ```
 
-4. (Optional) Update dependencies:
+## Usage
+
+### Basic Analysis
 ```bash
-pip install -r requirements.txt --upgrade
+etfa analyze SPY
 ```
+Shows basic ETF information and performance metrics.
+
+### Single ETF Analysis Options
+```bash
+etfa analyze SPY [OPTIONS]
+
+Options:
+  --benchmark TEXT  Benchmark ETF ticker (default: SPY)
+  --verbose        Show detailed liquidity analysis
+  --validate      Compare with external data sources
+  --history       Show historical performance metrics
+  --costs         Show trading cost breakdown
+```
+
+### Compare Multiple ETFs
+```bash
+etfa compare SPY IVV VOO [OPTIONS]
+
+Options:
+  --costs    Include trading cost comparison
+```
+
+### Command Differences
+
+- `analyze`: Deep dive into a single ETF
+  - Detailed metrics and analysis
+  - Historical performance
+  - Trading costs for the ETF
+  - Validation against external sources
+  - Liquidity score breakdown
+
+- `compare`: Side-by-side comparison of multiple ETFs
+  - Basic metrics for all ETFs
+  - Relative performance
+  - Trading cost differences
+  - Quick decision making
+
+## Metrics Explained
+
+### Basic Metrics
+- **AUM (Assets Under Management)**: Total value of assets in the ETF. Higher AUM generally indicates better liquidity and lower tracking error.
+- **Average Daily Volume**: Trading volume averaged over recent history. Higher volume suggests better liquidity and tighter spreads.
+- **Expense Ratio**: Annual management fee. Lower is better, but consider alongside tracking error.
+
+### Trading Metrics
+- **Bid/Ask Spread**: Current difference between best bid and ask prices. Lower spreads indicate better liquidity.
+- **Spread %**: Spread as percentage of price. <0.1% is excellent, >0.5% needs caution.
+- **Market Impact**: Estimated price movement from large trades. Lower is better.
+  - Small Impact: <0.1% for trades <1% ADV
+  - Medium Impact: 0.1-0.3% for trades 1-5% ADV
+  - Large Impact: >0.3% for trades >5% ADV
+
+### Performance Metrics
+- **Volatility (Annualized)**: Standard deviation of returns, annualized. Measures price variability and risk.
+- **Tracking Error**: Difference between ETF and benchmark returns. Lower values indicate better index replication.
+- **Sharpe Ratio**: Risk-adjusted return measure. Higher values indicate better risk-adjusted performance.
+- **Max Drawdown**: Largest peak-to-trough decline. Measures downside risk.
+
+### Liquidity Score Components (0-100)
+- **Volume Score (40 points)**:
+  - Daily volume consistency
+  - Volume relative to peers
+  - Volume trend analysis
+- **Spread Score (30 points)**:
+  - Current spread tightness
+  - Spread stability
+  - Market maker participation
+- **Asset Score (30 points)**:
+  - AUM size and stability
+  - Creation/redemption activity
+  - Market impact resistance
+
+### Trading Costs (available in compare --costs)
+- **Explicit Costs**:
+  - Expense Ratio
+  - Commission (if applicable)
+- **Implicit Costs**:
+  - Spread Cost (half the bid-ask spread)
+  - Market Impact Cost
+- **Total Trading Costs**:
+  - One-Way: Cost for single direction trade
+  - Round-Trip: Complete in-and-out trade cost
+
+Note: Trading cost analysis is available when comparing ETFs using the `compare` command with the `--costs` flag.
+
+## Validation
+
+The `--validate` flag compares key metrics against external sources:
+- Expense Ratio: Checked against fund provider data
+- AUM: Compared with recent filings
+- Volume: Verified against market data
+
+Color coding indicates discrepancy severity:
+- 🟢 Green: Minor difference (<1% for expense ratio, <10% for AUM, <15% for volume)
+- 🟡 Yellow: Moderate difference
+- 🔴 Red: Significant difference (requires investigation)
+
+## Historical Analysis
+
+The `--history` flag shows metrics over multiple periods:
+- 1 month
+- 3 months
+- 6 months
+- 1 year
+
+## Using Metrics for ETF Analysis
+
+### Liquidity Assessment
+1. Check Average Daily Volume: >$10M for good liquidity
+2. Review Liquidity Score: >80 indicates excellent tradability
+3. Examine bid-ask spreads: <0.1% preferred for large ETFs
+
+### Cost Efficiency
+1. Compare Expense Ratios within similar ETFs
+2. Consider Total Cost of Ownership:
+   - Expense Ratio
+   - Trading Costs
+   - Tracking Error impact
+
+### Performance Evaluation
+1. Compare Tracking Error to similar ETFs
+2. Assess Risk-Adjusted Returns (Sharpe Ratio)
+3. Review Max Drawdown for downside protection
+
+### Best Practices
+- Compare similar ETFs using the compare command
+- Validate data when analyzing unfamiliar ETFs
+- Consider trading costs for your typical trade size
+- Monitor historical trends for stability
+
+## Contributing
+
+Contributions welcome! Please read CONTRIBUTING.md for guidelines.
+
+## License
+
+MIT License - see LICENSE.md
 
 ## Architecture
 
 ```mermaid
 graph TD
-    CLI[CLI Interface] --> Analyzer[ETF Analyzer Core]
-    Analyzer --> DataSource[Data Sources]
-    Analyzer --> Metrics[Metrics Calculator]
-    Analyzer --> Trading[Trading Analysis]
+    CLI[CLI Interface] --> Analyzer[ETF Analyzer]
+    Analyzer --> DataCollector[Data Collector]
+    Analyzer --> MetricsCalculator[Metrics Calculator]
+    Analyzer --> Validator[Data Validator]
     
-    DataSource --> YFinance[Yahoo Finance API]
-    DataSource --> ETFcom[ETF.com Scraper]
-    DataSource --> Cache[Data Cache]
+    DataCollector --> YFinance[Yahoo Finance API]
+    DataCollector --> ETFcom[ETF.com Scraper]
+    DataCollector --> Cache[Data Cache]
     
-    Metrics --> Volatility[Volatility]
-    Metrics --> TrackingError[Tracking Error]
-    Metrics --> Liquidity[Liquidity Score]
+    MetricsCalculator --> Performance[Performance Metrics]
+    MetricsCalculator --> Liquidity[Liquidity Analysis]
+    MetricsCalculator --> TradingCosts[Trading Costs]
     
-    Trading --> Costs[Trading Costs]
-    Trading --> MarketMaker[Market Making]
-    Trading --> PremiumDiscount[Premium/Discount]
+    Validator --> ExternalSources[External Data Sources]
+    
+    subgraph "Data Sources"
+        YFinance
+        ETFcom
+        ExternalSources
+    end
+    
+    subgraph "Core Analysis"
+        Performance
+        Liquidity
+        TradingCosts
+    end
 ```
 
 ## Data Flow
@@ -122,443 +232,135 @@ sequenceDiagram
     participant User
     participant CLI
     participant Analyzer
-    participant YFinance
+    participant DataCollector
+    participant Calculator
+    participant Cache
     
-    User->>CLI: Input ETF ticker
-    CLI->>Analyzer: Create analyzer instance
-    Analyzer->>YFinance: Request ETF data
-    YFinance-->>Analyzer: Return price history
-    YFinance-->>Analyzer: Return basic info
-    Analyzer->>Analyzer: Calculate metrics
-    Analyzer-->>CLI: Return results
-    CLI-->>User: Display formatted results
+    User->>CLI: analyze ETF
+    CLI->>Analyzer: initialize
+    
+    Analyzer->>DataCollector: collect_basic_info()
+    DataCollector->>Cache: check cache
+    alt Data in cache
+        Cache-->>DataCollector: return cached data
+    else No cached data
+        DataCollector->>YFinance: get ETF data
+        DataCollector->>ETFcom: get additional info
+        DataCollector->>Cache: store data
+    end
+    
+    Analyzer->>Calculator: calculate_metrics()
+    Calculator-->>Analyzer: return metrics
+    
+    opt Validation requested
+        Analyzer->>Validator: validate_metrics()
+        Validator-->>Analyzer: validation results
+    end
+    
+    Analyzer-->>CLI: formatted results
+    CLI-->>User: display analysis
 ```
 
-## Entity Relationship
+## Error Handling Flow
 
 ```mermaid
-erDiagram
-    ETF {
-        string ticker
-        string name
-        string category
-        float expense_ratio
-    }
-    ETF ||--o{ PriceHistory : has
-    ETF ||--o{ BasicInfo : has
-    ETF ||--o{ Metrics : calculates
-    ETF ||--o{ Benchmark : tracks
-    PriceHistory ||--|{ DailyPrice : contains
-    Metrics ||--|{ VolatilityScore : includes
-    Metrics ||--|{ TrackingError : includes
-    Metrics ||--|{ LiquidityScore : includes
+sequenceDiagram
+    participant User
+    participant CLI
+    participant Analyzer
+    participant DataSource
+    participant Cache
+    
+    User->>CLI: analyze ETF
+    
+    alt Data Collection Error
+        CLI->>Analyzer: initialize
+        Analyzer->>DataSource: collect data
+        DataSource--xCLI: API/Connection Error
+        Note over CLI,DataSource: Fallback to cached data if available
+        CLI->>Cache: check cache
+        Cache-->>CLI: return cached data/error
+    end
+    
+    alt Validation Error
+        CLI->>Analyzer: validate_metrics()
+        Analyzer--xCLI: Validation Failed
+        Note over CLI,Analyzer: Display available metrics
+        Note over CLI,Analyzer: Mark invalid data as N/A
+    end
+    
+    alt Real-time Data Error
+        CLI->>Analyzer: collect_real_time_data()
+        Analyzer--xCLI: Market Closed/No Data
+        Note over CLI,Analyzer: Use historical averages
+        Note over CLI,Analyzer: Show warning indicators
+    end
+    
+    CLI-->>User: Display results with error context
 ```
 
-## Data Sources
+## Implementation Notes
 
-### 1. Yahoo Finance API
-The project uses the `yfinance` library to fetch ETF data from Yahoo Finance. This provides:
-- Historical price data
-- Trading volume
-- Basic ETF information
-- Expense ratios
-- Assets under management (when available)
-
-### 2. ETF.com Integration
-The analyzer includes web scraping capabilities for ETF.com, providing:
-- Expense ratio validation
-- AUM (Assets Under Management)
-- Average daily volume
-- Number of holdings
-- Segment/category information
-- Issuer details
-
-### Data Management Features
-
-#### Rate Limiting
-- Respects server limits (10 requests/minute)
-- Automatic request throttling
-- Prevents API/server overload
-
-#### Caching System
-- 24-hour cache for ETF.com data
-- Local cache storage in `.cache` directory
-- Automatic cache invalidation
-- Reduces server load and improves performance
-
-### Data Reliability
-- Multiple source validation
-- Cross-reference between Yahoo Finance and ETF.com
-- Error handling for service outages
-- Automatic fallback to cached data
-
-## Calculations and Metrics
-
-### 1. Volatility
-```python
-volatility = price_data.std() * np.sqrt(252)  # Annualized
-```
-- Measures price variation using standard deviation
-- Annualized by multiplying by sqrt(252) trading days
-- Higher values indicate more price uncertainty
-- Typical range: 10-30% for most ETFs
-
-### 2. Tracking Error
-```python
-return_differences = etf_returns - benchmark_returns
-tracking_error = return_differences.std() * np.sqrt(252)
-```
-- Measures how closely ETF follows its benchmark
-- Lower values indicate better benchmark tracking
-- Typical range: 0.1-2% for index ETFs
-
-### 3. Liquidity Score (0-100)
-Combines three components:
-1. Volume Score (40%):
-   ```python
-   volume_score = min(40, (avg_volume / 1000000) * 4)
-   ```
-   - Higher trading volume = better liquidity
-   - 4 points per million shares traded
-
-2. Spread Score (30%):
-   ```python
-   spread_score = max(0, 30 - spread_percentage * 10)
-   ```
-   - Tighter spreads = lower trading costs
-   - Uses high-low range as spread proxy
-
-3. Asset Base Score (30%):
-   ```python
-   asset_score = min(30, (assets / 1000000000) * 3)
-   ```
-   - Larger funds typically more liquid
-   - 3 points per billion in assets
-
-## Interpreting Results
-
-### Volatility
-- <15%: Low volatility, suitable for conservative investors
-- 15-25%: Moderate volatility, typical for broad market ETFs
-- >25%: High volatility, may require risk tolerance
-
-### Tracking Error
-- <0.5%: Excellent benchmark tracking
-- 0.5-1%: Good tracking, typical for most index ETFs
-- >1%: High tracking error, may indicate active management
-
-### Liquidity Score
-- 80-100: Highly liquid, suitable for all traders
-- 50-80: Moderately liquid, watch trading costs
-- <50: Limited liquidity, use limit orders
-
-## Usage Examples
-
-### Basic Analysis
-```bash
-etf-analyzer analyze VOO
-```
-
-### Advanced Analysis
-```bash
-# Show detailed breakdown of metrics
-etf-analyzer analyze VOO --verbose
-
-# Compare with ETF.com data
-etf-analyzer analyze VOO --validate
-
-# Compare different data providers
-etf-analyzer analyze VOO --sources
-
-# Show historical metrics
-etf-analyzer analyze VOO --history
-
-# Combine options
-etf-analyzer analyze VOO --verbose --validate --history
-```
-
-### Comparison Analysis
-```bash
-etf-analyzer compare VOO SPY QQQ
-```
-
-### Custom Benchmark
-```bash
-etf-analyzer analyze QQQ --benchmark SPY
-```
-
-### Real-Time Trading Metrics
-```bash
-# Show real-time trading metrics
-etf-analyzer analyze VOO --real-time
-
-# Combine with other analysis
-etf-analyzer analyze VOO --real-time --verbose
-```
-
-## Validation Methods
-
-### External Data Sources
-The analyzer validates metrics against multiple sources:
-1. ETF.com
-2. Yahoo Finance API
-3. Fund provider websites
-
-### Metric Validation
-Each metric is validated using:
-- Multiple data sources
-- Different calculation methods
-- Historical consistency checks
-
-### Validation Metrics
-| Metric | Validation Method | Typical Difference |
-|--------|------------------|-------------------|
-| Expense Ratio | Provider websites | < 0.01% |
-| Volatility | Multiple timeframes | < 2% |
-| Tracking Error | Rolling windows | < 0.5% |
-| Liquidity | Market depth data | Varies |
-
-### Interpreting Validation Results
-- **Small Differences** (<1%): Normal variation in calculation methods
-- **Medium Differences** (1-5%): Investigate data sources
-- **Large Differences** (>5%): Potential data issues
-
-## Data Sources Comparison
-
-### Primary Sources
-1. **Yahoo Finance (yfinance)**
-   - Real-time and historical prices
-   - Basic ETF information
-   - Trading volume
-
-2. **ETF.com**
-   - Expense ratios
-   - Fund details
-   - Holdings information
-
-3. **Provider Websites**
-   - Official expense ratios
-   - Detailed holdings
-   - Fund documentation
-
-### Source Reliability
-| Source | Pros | Cons |
-|--------|------|------|
-| yfinance | Real-time, Free | API limitations |
-| ETF.com | Comprehensive | Web scraping needed |
-| Providers | Authoritative | Different formats |
-
-## Best Practices
-
-1. Trading Considerations
-   - Use limit orders for ETFs with low liquidity scores
-   - Consider trading during market hours for better pricing
-   - Monitor tracking error for index-based strategies
-
-2. Analysis Tips
-   - Compare similar ETFs before investing
-   - Consider expense ratios alongside tracking error
-   - Monitor liquidity for large positions
-
-3. Risk Management
-   - Use volatility metrics for position sizing
-   - Consider correlation with existing holdings
-   - Monitor tracking error for index-based strategies
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Data Sources and Validation
-
-### Primary Data Sources
-1. **ETF.com (Primary)**
-   - Expense ratios (most accurate)
-   - AUM data
-   - Trading volume
-   - Holdings information
-   - Segment/category data
-
-2. **Yahoo Finance (Secondary)**
-   - Historical price data
-   - Basic ETF information
-   - Trading metrics
-   - Fallback data source
-
-### Data Collection Features
-- Rate limiting (5 requests/minute)
-- 24-hour data caching
-- Multiple source validation
-- Automatic fallback sources
-- Debug logging options
-
-### Validation Process
-1. **Expense Ratio Validation**
-   - Primary: ETF.com scraping
-   - Secondary: Yahoo Finance API
-   - Fallback: Provider websites
-   - Tolerance: 0.01% difference
-
-2. **AUM Validation**
-   - Multiple source comparison
-   - Date-aware validation
-   - Tolerance: 10% difference
-
-3. **Volume Validation**
-   - Rolling average comparison
-   - Market condition awareness
-   - Tolerance: 15% difference
+### Data Collection
+- **Caching Strategy**:
+  ```python
+  # Example cache implementation
+  class ETFDataCache:
+      def get(self, key: str) -> dict:
+          if self._is_expired(key):
+              return None
+          return self._cache.get(key)
+      
+      def set(self, key: str, data: dict):
+          data['timestamp'] = time.time()
+          self._cache[key] = data
+  ```
 
 ### Error Handling
-- Automatic retry logic
-- Graceful degradation
-- Multiple fallback sources
-- Detailed error reporting
-- Debug mode for troubleshooting
+- **Graceful Degradation**:
+  ```python
+  try:
+      real_time_data = collect_real_time_data()
+  except ConnectionError:
+      real_time_data = estimate_from_historical()
+  except MarketClosedError:
+      real_time_data = get_last_known_values()
+  ```
 
-### Custom Benchmark Analysis
-```bash
-# Analyze QQQ using VOO as benchmark
-etf-analyzer analyze QQQ --benchmark VOO
+### Data Validation
+- **Threshold Configuration**:
+  ```python
+  VALIDATION_THRESHOLDS = {
+      'expense_ratio': {'warn': 0.0005, 'error': 0.001},
+      'aum': {'warn': 0.10, 'error': 0.25},
+      'volume': {'warn': 0.15, 'error': 0.30}
+  }
+  ```
 
-# Compare sector ETF to industry benchmark
-etf-analyzer analyze XLE --benchmark VDE  # Energy sector
-etf-analyzer analyze XLK --benchmark VGT  # Technology sector
-```
+### Performance Optimization
+- Cache frequently accessed data
+- Batch API requests when possible
+- Use async calls for real-time data
+- Implement rate limiting for external APIs
 
-The custom benchmark feature allows you to:
-- Compare ETFs to more relevant benchmarks
-- Analyze sector-specific tracking
-- Calculate relative performance metrics
+### Best Practices
+1. **Data Collection**:
+   - Always validate API responses
+   - Implement retry logic with backoff
+   - Keep cache duration appropriate to data type
 
-The real-time metrics include:
-- Current bid and ask prices
-- Bid-ask spread ($ and %)
-- Intraday Indicative Value (IIV)
-- Premium/Discount to IIV
-- Estimated trading costs
+2. **Error Recovery**:
+   - Log all errors with context
+   - Provide meaningful user feedback
+   - Maintain data consistency during partial failures
 
-## Trading Cost Analysis
+3. **Validation**:
+   - Cross-reference multiple sources
+   - Track validation success rates
+   - Alert on systematic validation failures
 
-### Basic Cost Analysis
-```bash
-# Show trading costs for a single ETF
-etf-analyzer analyze VOO --costs
-```
-
-The cost analysis includes:
-- Explicit costs (commissions, expense ratios)
-- Implicit costs (spread costs, market impact)
-- Total round-trip trading costs
-- Cost alerts for high trading costs
-
-### Cost Comparison
-```bash
-# Compare trading costs across multiple ETFs
-etf-analyzer compare VOO SPY IVV --costs
-
-# Compare sector ETF costs
-etf-analyzer compare XLE VDE XOP --costs
-```
-
-### Premium/Discount Analysis
-```bash
-# Show premium/discount to NAV
-etf-analyzer analyze VOO --costs
-```
-
-Monitors:
-- Current premium/discount to NAV
-- Historical premium/discount levels
-- Alerts for unusual deviations
-
-### Market Maker Analysis
-```bash
-# Analyze market maker effectiveness
-etf-analyzer analyze VOO --market-maker
-```
-
-Provides:
-- Quote presence metrics
-- Spread stability analysis
-- Market depth estimation
-- Price continuity scoring
-
-## Real-Time Trading Metrics
-
-### Basic Trading Metrics
-```bash
-# Show real-time trading data
-etf-analyzer analyze VOO --real-time
-```
-
-Displays:
-- Current bid/ask prices
-- Bid-ask spread ($ and %)
-- Intraday Indicative Value (IIV)
-- Premium/Discount to IIV
-
-### Advanced Trading Analysis
-```bash
-# Combine multiple analysis types
-etf-analyzer analyze VOO --real-time --costs --market-maker
-```
-
-## Interpreting Results
-
-### Trading Costs
-- **Spread Cost**: < 0.05% excellent, > 0.20% concerning
-- **Market Impact**: < 0.10% good, > 0.25% high
-- **Round-Trip Cost**: < 0.15% excellent, > 0.50% high
-
-### Premium/Discount
-- **Normal Range**: ±0.25%
-- **Warning Level**: ±0.50%
-- **Alert Level**: ±1.00%
-
-### Market Making Quality
-- **Quote Presence**: > 95% excellent
-- **Spread Stability**: > 80% good
-- **Price Continuity**: > 90% excellent
-
-## Best Practices
-
-### Trading Execution
-1. **Cost-Aware Trading**:
-   - Use limit orders when spreads are wide
-   - Trade during market hours for better pricing
-   - Consider trade size vs. market impact
-
-2. **Premium/Discount Management**:
-   - Avoid trading at large premiums
-   - Monitor unusual discounts
-   - Use limit orders near IIV
-
-3. **Market Maker Awareness**:
-   - Check quote presence before trading
-   - Monitor spread stability
-   - Consider depth for large trades
-
-### Real-Time Data Notes
-
-The ETF analyzer attempts to collect real-time data from multiple sources:
-
-1. **Bid/Ask Data**: From Yahoo Finance
-2. **IIV Data**: 
-   - Primary: Yahoo Finance (.IV suffix)
-   - Secondary: ETF.com
-   - Note: IIV may not be available for all ETFs
-
-If IIV data is not available, the analyzer will:
-- Continue to show bid/ask spreads
-- Skip premium/discount calculations
-- Note the missing data in the output
+4. **Real-time Analysis**:
+   - Handle market hours correctly
+   - Account for trading halts
+   - Consider timezone differences
 

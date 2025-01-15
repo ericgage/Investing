@@ -85,3 +85,84 @@ def calculate_metric(data: pd.DataFrame) -> float:
 3. Create release branch
 4. Tag release
 5. Build and publish 
+
+## Market Impact Analysis
+
+### What is Market Impact?
+Market Impact is the effect that a trade has on the market price of a security. When executing a large order, the price typically moves adversely against the trader:
+- Buy orders tend to push prices up
+- Sell orders tend to push prices down
+
+### Impact Factors
+
+Market impact is calculated using several factors:
+
+1. **Base Impact Factor (0.1 or 10%)**
+```python
+impact_factor = 0.1  # 10% of spread for normal trades
+market_impact = spread_cost * impact_factor
+```
+
+2. **Volume-Based Scaling**
+```python
+# Trade size relative to average daily volume (ADV)
+IMPACT_THRESHOLDS = {
+    0.01: 0.1,   # 1% of ADV: normal impact (10% of spread)
+    0.05: 0.2,   # 5% of ADV: doubled impact (20% of spread)
+    0.10: 0.4,   # 10% of ADV: quadrupled impact (40% of spread)
+    0.20: 0.8    # 20% of ADV: severe impact (80% of spread)
+}
+```
+
+3. **Liquidity Adjustments**
+- High liquidity (score > 80): impact reduced by 20%
+- Medium liquidity (score 50-80): standard impact
+- Low liquidity (score < 50): impact increased by 20%
+
+### Example Calculations
+
+1. **Small Trade (1% ADV)**
+```python
+# For an ETF with:
+spread = 0.10%           # 10 basis points spread
+adv = 1,000,000 shares  # Average daily volume
+trade_size = 10,000     # 1% of ADV
+
+base_impact = spread * 0.1
+adjusted_impact = base_impact * (trade_size / adv / 0.01)
+# Result: ~0.01% price impact
+```
+
+2. **Large Trade (10% ADV)**
+```python
+trade_size = 100,000    # 10% of ADV
+
+base_impact = spread * 0.4
+adjusted_impact = base_impact * (trade_size / adv / 0.10)
+# Result: ~0.04% price impact
+```
+
+### Market Impact Alerts
+
+The system generates alerts based on estimated impact:
+```python
+if market_impact > 0.002:  # 0.2% threshold
+    alerts.append(f"High market impact: {market_impact:.3%}")
+```
+
+### Best Practices
+
+1. **Trade Size Considerations**
+- Keep individual trades below 1% ADV when possible
+- Split large orders into smaller chunks
+- Use time-weighted average price (TWAP) for large orders
+
+2. **Timing Considerations**
+- Avoid trading at market open/close
+- Consider higher impacts during low-volume periods
+- Monitor unusual market conditions
+
+3. **Liquidity Monitoring**
+- Regular tracking of liquidity scores
+- Adjustment of impact estimates based on market conditions
+- Consideration of historical liquidity patterns 

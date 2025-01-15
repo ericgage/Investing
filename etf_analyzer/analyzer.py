@@ -9,22 +9,39 @@ from .browser import BrowserSession
 import time
 from selenium.common.exceptions import WebDriverException
 from requests.exceptions import RequestException
+from datetime import datetime, time
+import pytz
+
+class MarketHoursError(Exception):
+    """Raised when attempting real-time operations outside market hours"""
+    pass
 
 class ETFAnalyzer:
-    def __init__(self, ticker, benchmark_ticker="SPY"):
+    # Add market hours constants
+    MARKET_OPEN = time(9, 30)  # 9:30 AM ET
+    MARKET_CLOSE = time(16, 0)  # 4:00 PM ET
+    MARKET_TZ = pytz.timezone('America/New_York')
+    
+    def __init__(self, ticker, benchmark_ticker='SPY', debug=False):
         """
         Initialize ETF analyzer with optional custom benchmark
         
         Args:
             ticker (str): ETF ticker symbol
-            benchmark_ticker (str): Benchmark ETF ticker (default: "SPY")
+            benchmark (str): Benchmark ETF ticker (default: "SPY")
+            debug (bool): Enable debug mode
         """
         self.ticker = ticker
-        self.benchmark_ticker = benchmark_ticker
-        self.data = {}
+        self.benchmark = benchmark_ticker
+        self.debug = debug
+        self.data = {'basic': {}, 'price_history': None}
         self.metrics = {}
         self.cache = ETFDataCache()
-        self.browser = BrowserSession()  # Initialize browser here
+        self.browser = BrowserSession()
+        
+    def _debug(self, msg):
+        if self.debug:
+            print(f"Debug: {msg}")
         
     def collect_basic_info(self):
         """
@@ -99,17 +116,17 @@ class ETFAnalyzer:
             self.data['price_history'] = history
             
             # Get benchmark data if different
-            if self.ticker != self.benchmark_ticker:
+            if self.ticker != self.benchmark:
                 try:
                     print("Debug: Getting benchmark history")
-                    benchmark_data = yf.Ticker(self.benchmark_ticker)
+                    benchmark_data = yf.Ticker(self.benchmark)
                     self.data['benchmark_history'] = benchmark_data.history(period="1y")
                     print(f"Debug: Got {len(self.data['benchmark_history'])} days of benchmark history")
                 except RequestException as e:
                     raise RuntimeError(f"Failed to fetch benchmark data: {str(e)}") from e
                 
                 if len(self.data['benchmark_history']) < 30:
-                    raise ValueError(f"Insufficient price history for benchmark {self.benchmark_ticker}")
+                    raise ValueError(f"Insufficient price history for benchmark {self.benchmark}")
                 
                 # Ensure dates align
                 common_dates = history.index.intersection(self.data['benchmark_history'].index)
@@ -158,13 +175,13 @@ class ETFAnalyzer:
     def _calculate_tracking_error(self):
         """Calculate tracking error against custom benchmark"""
         try:
-            if self.ticker == self.benchmark_ticker:
+            if self.ticker == self.benchmark:
                 print("Debug: Same ticker as benchmark, returning 0")
                 return 0.0
             
             if 'benchmark_history' not in self.data:
                 print("Debug: Getting benchmark history")
-                benchmark_data = yf.Ticker(self.benchmark_ticker)
+                benchmark_data = yf.Ticker(self.benchmark)
                 benchmark_history = benchmark_data.history(period="1y")
                 self.data['benchmark_history'] = benchmark_history
             
@@ -522,54 +539,57 @@ class ETFAnalyzer:
             return False 
 
     def collect_real_time_data(self):
-        """Collect real-time trading data including bid-ask spread"""
+        """Collect real-time trading data with market hours handling"""
         try:
-            # Get real-time quote data
+            if not self._is_market_open():
+                # Get last known values if market is closed
+                rt_data = self._get_last_known_values()
+                rt_data['market_status'] = 'closed'
+                self.data['real_time'] = rt_data
+                return rt_data
+            
+            # Market is open, get real-time data
             ticker_data = yf.Ticker(self.ticker)
             quote = ticker_data.info
             
-            # Initialize with None values
             rt_data = {
-                'bid': None,
-                'ask': None,
-                'spread': None,
-                'spread_pct': None,
-                'last_price': None,
-                'iiv': None,
-                'timestamp': None
+                'bid': quote.get('bid'),
+                'ask': quote.get('ask'),
+                'last_price': quote.get('regularMarketPrice'),
+                'iiv': None,  # Always include IIV field, even if None
+                'timestamp': quote.get('regularMarketTime'),
+                'market_status': 'open'
             }
             
-            # Get bid/ask data
-            rt_data['bid'] = quote.get('bid')
-            rt_data['ask'] = quote.get('ask')
-            rt_data['last_price'] = quote.get('regularMarketPrice')
-            rt_data['timestamp'] = quote.get('regularMarketTime')
-            
-            # Calculate spread only if we have valid bid/ask
-            if rt_data['bid'] and rt_data['ask'] and rt_data['bid'] > 0 and rt_data['ask'] > 0:
-                rt_data['spread'] = rt_data['ask'] - rt_data['bid']
-                # Store as decimal, not percentage
-                rt_data['spread_pct'] = rt_data['spread'] / ((rt_data['bid'] + rt_data['ask']) / 2)
-                
-                # Validate spread is reasonable (shouldn't be more than 5% for liquid ETFs)
-                if rt_data['spread_pct'] > 0.05:  # 5%
-                    print(f"Warning: Unusually wide spread detected ({rt_data['spread_pct']:.2%})")
-            
-            # Try alternative sources for IIV
-            try:
-                # Try ETF.com for IIV data
-                etf_com_data = self._get_etf_com_metrics()
-                if etf_com_data and 'iiv' in etf_com_data:
-                    rt_data['iiv'] = etf_com_data['iiv']
-            except Exception as e:
-                print(f"Note: IIV data not available from alternative sources")
+            # Calculate spread if we have valid bid/ask
+            if all(isinstance(rt_data[x], (int, float)) for x in ['bid', 'ask']):
+                if rt_data['bid'] > 0 and rt_data['ask'] > 0:
+                    rt_data['spread'] = rt_data['ask'] - rt_data['bid']
+                    rt_data['spread_pct'] = rt_data['spread'] / ((rt_data['bid'] + rt_data['ask']) / 2)
             
             self.data['real_time'] = rt_data
             return rt_data
             
         except Exception as e:
             print(f"Error collecting real-time data: {str(e)}")
-            return None 
+            return self._get_last_known_values()
+    
+    def _get_last_known_values(self):
+        """Get last known trading values when market is closed"""
+        try:
+            history = yf.Ticker(self.ticker).history(period='1d')
+            if len(history) > 0:
+                last_row = history.iloc[-1]
+                return {
+                    'bid': None,
+                    'ask': None,
+                    'last_price': last_row['Close'],
+                    'timestamp': last_row.name,
+                    'market_status': 'closed'
+                }
+        except Exception as e:
+            print(f"Error getting last known values: {str(e)}")
+        return None
 
     def analyze_market_making(self):
         """Analyze market maker effectiveness and liquidity provision"""
@@ -623,41 +643,60 @@ class ETFAnalyzer:
     def analyze_trading_costs(self):
         """Analyze total trading costs including spread, impact, and fees"""
         try:
-            rt_data = self.data.get('real_time', {})
-            if not rt_data:
-                return None
-            
+            # Initialize with default values if 'basic' doesn't exist
+            expense_ratio = self.data.get('basic', {}).get('expenseRatio', 0.0)
             costs = {
-                'explicit': {},
-                'implicit': {},
-                'total': {
-                    'one_way': 0.0,
-                    'round_trip': 0.0
-                },
+                'explicit': {'expense_ratio': expense_ratio},
+                'implicit': {'spread_cost': None, 'market_impact': None},
+                'total': {'one_way': expense_ratio, 'round_trip': expense_ratio * 2},
                 'alerts': []
             }
+
+            # Get real-time data
+            rt_data = self.data.get('real_time', {})
             
-            # Explicit costs
-            costs['explicit']['commission'] = 0.0
-            costs['explicit']['expense_ratio'] = self.data['basic']['expenseRatio']
-            
-            # Implicit costs
-            spread_pct = rt_data.get('spread_pct', 0.0)
+            # Check if we have any real-time data
+            if not rt_data:
+                costs['alerts'].append("No real-time data available - showing expense ratio only")
+                return costs
+
+            # Check if we have valid bid/ask
+            bid = rt_data.get('bid')
+            ask = rt_data.get('ask')
+            if not bid or not ask or bid <= 0 or ask <= 0:
+                costs['alerts'].append("No real-time bid/ask data available")
+                return costs
+
+            # Calculate spread cost
+            spread_pct = (ask - bid) / ((bid + ask) / 2)
             costs['implicit']['spread_cost'] = spread_pct / 2
             
-            # Calculate totals
-            one_way = costs['implicit']['spread_cost'] + costs['explicit']['expense_ratio']
-            costs['total']['one_way'] = one_way
-            costs['total']['round_trip'] = one_way * 2
+            # Calculate market impact if we have volume data
+            avg_volume = self.data.get('price_history', {}).get('Volume', pd.Series()).mean()
+            if avg_volume and avg_volume > 0:
+                impact_factor = 0.1  # 10% of spread for normal size trades
+                costs['implicit']['market_impact'] = costs['implicit']['spread_cost'] * impact_factor
+            else:
+                # No volume data available - use default impact
+                costs['implicit']['market_impact'] = costs['implicit']['spread_cost'] * 0.1
+                costs['alerts'].append("Using default market impact estimate - no volume data available")
             
-            # Add alerts for high spreads (0.5% threshold)
-            if spread_pct >= 0.005:  # Changed from > to >= to match test case
-                costs['alerts'].append(f"High spread cost: {spread_pct:.3%}")
-            
+            # Calculate total costs
+            spread_cost = costs['implicit']['spread_cost'] or 0.0
+            market_impact = costs['implicit']['market_impact'] or 0.0
+            costs['total']['one_way'] = spread_cost + market_impact + expense_ratio
+            costs['total']['round_trip'] = (spread_cost + market_impact + expense_ratio) * 2
+
             return costs
+
         except Exception as e:
             print(f"Error analyzing trading costs: {str(e)}")
-            return None
+            return {
+                'explicit': {'expense_ratio': expense_ratio},
+                'implicit': {'spread_cost': None, 'market_impact': None},
+                'total': {'one_way': expense_ratio, 'round_trip': expense_ratio * 2},
+                'alerts': [f"Error calculating costs: {str(e)}"]
+            }
 
     def analyze_premium_discount(self):
         """Analyze premium/discount to NAV and set alerts"""
@@ -774,3 +813,15 @@ class ETFAnalyzer:
         except Exception as e:
             print(f"Error parsing spread: {str(e)}")
             return None 
+
+    def _is_market_open(self):
+        """Check if the US market is currently open"""
+        now = datetime.now(self.MARKET_TZ)
+        current_time = now.time()
+        
+        # Check if it's a weekday (0 = Monday, 4 = Friday)
+        if now.weekday() > 4:
+            return False
+            
+        # Check if within market hours
+        return self.MARKET_OPEN <= current_time <= self.MARKET_CLOSE 

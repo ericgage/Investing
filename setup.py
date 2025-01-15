@@ -1,18 +1,23 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="etf_analyzer",
-    version="0.1",
+    name="etf-analyzer",
+    version="0.1.0",
     packages=find_packages(),
     install_requires=[
-        'click',
-        'rich',
+        'selenium',
+        'selenium-stealth',
+        'pandas',
         'yfinance',
-        'pandas'
+        'rich',
+        'click',
+        'pytz',
+        'beautifulsoup4',
+        'requests'
     ],
     entry_points={
         'console_scripts': [
             'etfa=etf_analyzer.cli:cli',
         ],
-    }
+    },
 ) 

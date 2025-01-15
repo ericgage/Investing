@@ -1,64 +1,80 @@
 import pytest
-from etf_analyzer import ETFAnalyzer
+from etf_analyzer.analyzer import ETFAnalyzer
 import pandas as pd
 
-def test_trading_cost_calculation(mock_etf_data):
-    """Test basic trading cost calculation"""
+@pytest.fixture
+def mock_etf():
     analyzer = ETFAnalyzer('TEST')
-    analyzer.data = mock_etf_data.copy()
+    # Mock basic data
+    analyzer.data['basic'] = {'expenseRatio': 0.005}  # 0.5% expense ratio
+    return analyzer
+
+def test_trading_costs_expense_ratio_only(mock_etf):
+    """Test when only expense ratio is available"""
+    costs = mock_etf.analyze_trading_costs()
     
-    # Update real-time data with high spread
-    analyzer.data['real_time'].update({
+    assert costs['explicit']['expense_ratio'] == 0.005
+    assert costs['implicit']['spread_cost'] is None
+    assert costs['implicit']['market_impact'] is None
+    assert costs['total']['one_way'] == 0.005
+    assert costs['total']['round_trip'] == 0.01
+    assert "No real-time data available" in costs['alerts'][0]
+
+def test_trading_costs_with_real_time_data(mock_etf):
+    """Test with real-time bid/ask data"""
+    # Mock real-time data
+    mock_etf.data['real_time'] = {
         'bid': 100.0,
-        'ask': 100.5,  # 0.5% spread
-        'last_price': 100.25
+        'ask': 100.10,
+    }
+    
+    # Add required price history for volume calculation
+    mock_etf.data['price_history'] = pd.DataFrame({
+        'Volume': [1000000] * 30  # 30 days of volume data
     })
     
-    costs = analyzer.analyze_trading_costs()
-    assert costs is not None
-    assert costs['implicit']['spread_cost'] == 0.0025  # Half of 0.5%
-    assert costs['total']['round_trip'] > costs['total']['one_way']
+    costs = mock_etf.analyze_trading_costs()
+    
+    # Spread cost should be half the spread percentage
+    expected_spread_cost = ((100.10 - 100.0) / 100.05) / 2
+    expected_market_impact = expected_spread_cost * 0.1
+    
+    assert costs['explicit']['expense_ratio'] == 0.005
+    assert pytest.approx(costs['implicit']['spread_cost']) == expected_spread_cost
+    assert pytest.approx(costs['implicit']['market_impact']) == expected_market_impact
+    assert len(costs['alerts']) == 0
 
-def test_cost_alerts(mock_etf_data, mock_browser):
-    """Test cost alerts for high spreads"""
-    analyzer = ETFAnalyzer('TEST')
-    analyzer.browser = mock_browser
+def test_trading_costs_without_volume_data(mock_etf):
+    """Test handling of missing volume data"""
+    mock_etf.data['real_time'] = {
+        'bid': 100.0,
+        'ask': 100.10,
+    }
+    # Don't add volume data
     
-    # Create high spread scenario
-    test_data = mock_etf_data.copy()
-    test_data['real_time'].update({
-        'bid': 100.00,
-        'ask': 100.50,  # 0.5% spread (high)
-        'last_price': 100.25,
-        'spread': 0.50,
-        'spread_pct': 0.005
-    })
+    costs = mock_etf.analyze_trading_costs()
     
-    analyzer.data = test_data
-    costs = analyzer.analyze_trading_costs()
+    expected_spread_cost = ((100.10 - 100.0) / 100.05) / 2
+    expected_market_impact = expected_spread_cost * 0.1
     
-    assert costs is not None
-    assert len(costs['alerts']) > 0
-    assert any('high spread' in alert.lower() for alert in costs['alerts'])
+    assert costs['explicit']['expense_ratio'] == 0.005
+    assert pytest.approx(costs['implicit']['spread_cost']) == expected_spread_cost
+    assert pytest.approx(costs['implicit']['market_impact']) == expected_market_impact
+    assert "Using default market impact estimate" in costs['alerts'][0]
 
-def test_spread_calculation(mock_etf_data, mock_browser):
-    """Test spread calculation with different market conditions"""
-    analyzer = ETFAnalyzer('TEST')
-    analyzer.browser = mock_browser
+def test_trading_costs_with_invalid_data(mock_etf):
+    """Test handling of invalid bid/ask data"""
+    # Mock invalid real-time data
+    mock_etf.data['real_time'] = {
+        'bid': 0,
+        'ask': 0,
+    }
     
-    # Test normal spread
-    test_data = mock_etf_data.copy()
-    test_data['real_time'].update({
-        'bid': 100.00,
-        'ask': 100.02,  # 0.02% spread (normal)
-        'last_price': 100.01,
-        'spread': 0.02,
-        'spread_pct': 0.0002
-    })
+    costs = mock_etf.analyze_trading_costs()
     
-    analyzer.data = test_data
-    costs = analyzer.analyze_trading_costs()
-    
-    assert costs is not None
-    assert costs['implicit']['spread_cost'] < 0.001  # Less than 0.1%
-    assert len(costs['alerts']) == 0  # No alerts for normal spread 
+    assert costs['explicit']['expense_ratio'] == 0.005
+    assert costs['implicit']['spread_cost'] is None
+    assert costs['implicit']['market_impact'] is None
+    assert costs['total']['one_way'] == 0.005
+    assert costs['total']['round_trip'] == 0.01
+    assert "No real-time bid/ask data available" in costs['alerts'][0] 

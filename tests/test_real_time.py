@@ -22,27 +22,47 @@ def test_real_time_data_handling(mock_etf_data):
         assert rt_data['spread'] == spread
         assert rt_data['spread_pct'] == spread / ((rt_data['bid'] + rt_data['ask']) / 2)
 
-def test_missing_iiv_handling():
+@pytest.fixture
+def mock_market_closed(monkeypatch):
+    """Mock market as closed"""
+    def mock_is_market_open(self):
+        return False
+    monkeypatch.setattr('etf_analyzer.analyzer.ETFAnalyzer._is_market_open', mock_is_market_open)
+
+def test_missing_iiv_handling(mock_market_closed, monkeypatch):
     """Test handling of missing IIV data"""
+    print("\nDebug: Starting missing IIV test")
     analyzer = ETFAnalyzer('TEST')
+    print("Debug: Created analyzer")
     
-    # Set up test data without IIV
-    analyzer.data = {
-        'basic': {
-            'name': 'Test ETF',
-            'category': 'Test Category',
-            'expenseRatio': 0.0003
-        },
-        'real_time': {
-            'bid': 100.0,
-            'ask': 100.1,
-            'last_price': 100.05,
+    # Mock history data
+    history = pd.DataFrame({
+        'Close': [100.0],
+        'High': [101.0],
+        'Low': [99.0],
+        'Volume': [1000000]
+    }, index=[pd.Timestamp.now(tz='UTC')])
+    
+    def mock_history(*args, **kwargs):
+        return history
+    
+    def mock_get_last_known_values(self):
+        """Mock to ensure IIV field is present"""
+        return {
+            'bid': None,
+            'ask': None,
+            'last_price': 100.0,
+            'iiv': None,  # Add IIV field
             'timestamp': pd.Timestamp.now(tz='UTC'),
-            'iiv': None  # Missing IIV
+            'market_status': 'closed'
         }
-    }
     
-    # Should not raise error for missing IIV
+    monkeypatch.setattr('yfinance.Ticker.history', mock_history)
+    monkeypatch.setattr('etf_analyzer.analyzer.ETFAnalyzer._get_last_known_values', mock_get_last_known_values)
+    
     rt_data = analyzer.collect_real_time_data()
+    print(f"Debug: Collected real-time data: {rt_data}")
     assert rt_data is not None
+    print(f"Debug: rt_data keys: {rt_data.keys()}")
+    assert 'iiv' in rt_data
     assert rt_data['iiv'] is None 

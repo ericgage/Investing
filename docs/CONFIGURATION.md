@@ -98,4 +98,64 @@ metrics:
   volatility:
     annualization: 252
     rolling_window: 21
-``` 
+```
+
+## Browser Automation Setup
+
+### Required Dependencies
+- selenium: Web browser automation
+- selenium-stealth: Anti-detection measures
+- ChromeDriver: Browser interface
+
+### ChromeDriver Installation
+
+1. **macOS (using Homebrew)**:
+```bash
+brew install --cask chromedriver
+```
+
+2. **Ubuntu/Debian**:
+```bash
+sudo apt install chromium-chromedriver
+```
+
+3. **Windows**:
+- Download ChromeDriver from: https://chromedriver.chromium.org/
+- Add to PATH or specify location in config
+
+### Configuration Options
+
+```python
+# config/browser.py
+BROWSER_CONFIG = {
+    'headless': True,           # Run without visible window
+    'stealth': True,            # Enable anti-detection
+    'timeout': 10,              # Page load timeout (seconds)
+    'retry_attempts': 3,        # Failed request retries
+    'user_agent': None,         # Custom user agent (or None for default)
+}
+```
+
+### Troubleshooting
+
+1. **Version Mismatch**
+```bash
+# Check Chrome version
+google-chrome --version
+
+# Install matching ChromeDriver version
+```
+
+2. **Permission Issues**
+```bash
+# macOS/Linux
+chmod +x /path/to/chromedriver
+
+# Windows
+# Run as Administrator
+```
+
+3. **Common Errors**:
+- WebDriverException: Update ChromeDriver
+- SessionNotCreated: Version mismatch
+- ConnectionRefused: Driver not running 
