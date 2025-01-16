@@ -1,87 +1,114 @@
-# Developer Guide
+# ETF Analyzer Developer Guide
+
+## Overview
+ETF Analyzer is a Python tool for analyzing ETF performance, costs, and metrics. It provides comprehensive analysis of ETFs including performance metrics, risk assessment, trading costs, and peer comparisons.
 
 ## Development Setup
-
-1. **Environment Setup**
+1. Create a virtual environment:
 ```bash
-# Create development environment
-python3 -m venv etfa-dev
-source etfa-dev/bin/activate
-pip install -r requirements-dev.txt
+python -m venv etfa
+source etfa/bin/activate  # or `etfa\Scripts\activate` on Windows
 ```
 
-2. **Pre-commit Hooks**
+2. Install in development mode:
 ```bash
-pre-commit install
+pip install -e .
+```
+
+3. Run tests:
+```bash
+pytest
 ```
 
 ## Code Structure
+- `etf_analyzer/`: Main package directory
+  - `analyzer.py`: Core analysis functionality
+  - `browser.py`: Web scraping utilities
+  - `cli.py`: Command-line interface
+  - `utils.py`: Helper functions
 
-```
-etf_analyzer/
-├── __init__.py
-├── analyzer.py     # Core analysis logic
-├── browser.py     # Browser automation
-├── cli.py         # Command line interface
-└── utils.py       # Helper functions
+## Key Features
 
-tests/
-├── __init__.py
-└── test_*.py      # Test files
+### Performance Metrics
+- Alpha: Risk-adjusted excess return
+- Beta: Market sensitivity
+- Information Ratio: Active return per unit of risk
+- Sharpe Ratio: Risk-adjusted return
+- Sortino Ratio: Downside risk-adjusted return
+- Up/Down Capture: Market cycle performance
+
+### Risk Metrics
+- Volatility: Price movement variability
+- Tracking Error: Deviation from benchmark
+- Maximum Drawdown: Largest peak-to-trough decline
+- Beta: Market sensitivity measure
+
+### Trading Costs
+- Expense Ratio: Fund management fees
+- Bid-Ask Spread: Trading friction cost
+- Market Impact: Price effect of trading
+- Total Cost: Combined trading expenses
+
+### Liquidity Analysis
+- Volume Score: Trading volume assessment
+- Spread Score: Bid-ask spread evaluation
+- Asset Score: Fund size consideration
+- Overall Liquidity: Combined liquidity measure
+
+## Command Line Interface
+
+### Single ETF Analysis
+```bash
+etfa analyze TICKER [OPTIONS]
 ```
+Options:
+- `--verbose`: Show detailed metrics
+- `--validate`: Compare with external sources
+- `--history`: Show historical metrics
+- `--costs`: Show trading cost analysis
+- `--debug`: Enable debug output
+
+### ETF Comparison
+```bash
+etfa compare TICKER1 TICKER2 [TICKER3...] [OPTIONS]
+```
+Options:
+- `--costs`: Show trading cost comparison
+- `--debug`: Enable debug output
 
 ## Testing
+- Use pytest for all tests
+- Mock external dependencies
+- Test both success and error cases
+- Include docstrings in test files
 
-1. **Running Tests**
-```bash
-# Run all tests
-pytest
+### Test Categories
+1. Performance Metrics
+2. Risk Metrics
+3. Cost Analysis
+4. Data Collection
+5. Error Handling
 
-# Run with coverage
-pytest --cov=etf_analyzer
+## Contributing
+1. Create a feature branch
+2. Add tests for new functionality
+3. Run full test suite
+4. Submit pull request
 
-# Run specific test file
-pytest tests/test_analyzer.py
-```
+## Scoring System
+The tool uses a 100-point scoring system:
+- Performance (35%): Alpha and Information Ratio
+- Risk Management (25%): Beta, Volatility, Drawdown
+- Cost & Liquidity (25%): Trading costs and liquidity
+- Peer Comparison (15%): Up/Down capture ratios
 
-2. **Mock Data**
-- Use `tests/fixtures/` for mock responses
-- Use `@pytest.fixture` for common test data
+## Recommendations
+Recommendations are provided with confidence levels:
+- Strong Buy: Score ≥ 4
+- Hold: Score ≥ 2
+- Consider Alternatives: Score < 2
 
-## Code Style
-
-1. **Type Hints**
-```python
-def calculate_metric(data: pd.DataFrame) -> float:
-    """
-    Calculate a metric from DataFrame.
-    
-    Args:
-        data: Price history data
-        
-    Returns:
-        float: Calculated metric
-    """
-    return float(data.std())
-```
-
-2. **Documentation**
-- Use Google-style docstrings
-- Include examples in docstrings
-- Document exceptions
-
-## Pull Request Process
-
-1. Create feature branch
-2. Write tests
-3. Update documentation
-4. Run linters
-5. Submit PR with description
-
-## Release Process
-
-1. Update version in `setup.py`
-2. Update CHANGELOG.md
-3. Create release branch
-4. Tag release
-5. Build and publish 
+Confidence levels (High/Medium/Low) are based on:
+- Data quality (history length)
+- Metric consistency
+- Market conditions 

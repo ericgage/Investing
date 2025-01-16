@@ -1,27 +1,30 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-## [1.0.0] - 2024-03-14
-
+## [0.3.0] - 2024-03-XX
 ### Added
-- ETF.com integration as primary data source
-- Browser automation for reliable data collection
-- Rate limiting and caching system
-- Multi-source validation for metrics
-- Debug logging capabilities
-- Automatic fallback mechanisms
-- Detailed error reporting
-- Chrome/ChromeDriver setup instructions
+- Performance metrics analysis
+  - Alpha and Beta calculations
+  - Information and Sortino ratios
+  - Up/Down market capture ratios
+- Enhanced ETF comparison features
+  - Risk-adjusted rankings
+  - Strength/weakness analysis
+  - Peer comparison metrics
+- Confidence scoring system
+  - Data quality assessment
+  - Market condition analysis
+  - Metric consistency checks
+- Improved CLI output
+  - Color-coded metrics
+  - Detailed metric descriptions
+  - Summary comparison tables
 
 ### Changed
-- Improved expense ratio collection with priority sources
-- Enhanced error handling for web scraping
-- Better data validation and parsing
-- Updated documentation with new features
+- Refactored scoring system with weighted components
+- Updated recommendation logic with confidence levels
+- Enhanced error handling in metric calculations
 
 ### Fixed
-- ETF.com parsing issues
-- Expense ratio accuracy
-- AUM comparison calculations
-- Volume data validation 
+- Row handling in Rich tables
+- Metric calculation edge cases
+- Style tag formatting issues 

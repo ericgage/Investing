@@ -594,3 +594,120 @@ class ETFAnalyzer:
         except Exception as e:
             self._debug(f"Error calculating market impact: {str(e)}")
             return 0.0 
+
+    def calculate_performance_metrics(self):
+        """Calculate comprehensive performance metrics"""
+        try:
+            if 'price_history' not in self.data:
+                self.collect_performance()
+            
+            price_data = self.data['price_history']['Close']
+            daily_returns = price_data.pct_change().dropna()
+            
+            # Calculate performance metrics
+            self.metrics.update({
+                'alpha': self._calculate_alpha(daily_returns),
+                'beta': self._calculate_beta(daily_returns),
+                'information_ratio': self._calculate_information_ratio(daily_returns),
+                'sortino_ratio': self._calculate_sortino_ratio(daily_returns),
+                'capture_ratios': self._calculate_capture_ratios(daily_returns)
+            })
+            
+        except Exception as e:
+            self._debug(f"Error calculating performance metrics: {str(e)}")
+            raise
+
+    def _calculate_alpha(self, returns):
+        """Calculate Jensen's Alpha"""
+        if self.ticker == self.benchmark:
+            return 0.0
+        
+        benchmark_returns = self.data['benchmark_history']['Close'].pct_change().dropna()
+        returns, benchmark_returns = returns.align(benchmark_returns, join='inner')
+        
+        # Use CAPM to calculate alpha
+        risk_free_rate = 0.05  # Annual rate
+        daily_rf = risk_free_rate / 252
+        
+        beta = self._calculate_beta(returns)
+        
+        # Calculate annualized returns
+        ann_return = (1 + returns.mean()) ** 252 - 1
+        ann_benchmark_return = (1 + benchmark_returns.mean()) ** 252 - 1
+        
+        # Calculate alpha using CAPM
+        alpha = ann_return - (risk_free_rate + beta * (ann_benchmark_return - risk_free_rate))
+        return float(alpha)
+
+    def _calculate_information_ratio(self, returns):
+        """Calculate Information Ratio"""
+        if self.ticker == self.benchmark:
+            return 0.0
+        
+        benchmark_returns = self.data['benchmark_history']['Close'].pct_change().dropna()
+        returns, benchmark_returns = returns.align(benchmark_returns, join='inner')
+        
+        active_returns = returns - benchmark_returns
+        tracking_error = active_returns.std() * np.sqrt(252)
+        
+        if tracking_error == 0:
+            return 0.0
+        
+        return float(active_returns.mean() * 252 / tracking_error) 
+
+    def _calculate_beta(self, returns):
+        """Calculate Beta against benchmark"""
+        if self.ticker == self.benchmark:
+            return 1.0
+        
+        benchmark_returns = self.data['benchmark_history']['Close'].pct_change().dropna()
+        returns, benchmark_returns = returns.align(benchmark_returns, join='inner')
+        
+        # Calculate beta using covariance and variance
+        covariance = returns.cov(benchmark_returns)
+        variance = benchmark_returns.var()
+        
+        if variance == 0:
+            return 0.0
+        
+        return float(covariance / variance)
+
+    def _calculate_sortino_ratio(self, returns):
+        """Calculate Sortino Ratio (using only downside volatility)"""
+        try:
+            risk_free_rate = 0.05  # Could fetch this dynamically
+            excess_returns = returns - (risk_free_rate / 252)
+            
+            # Calculate downside deviation (only negative returns)
+            downside_returns = excess_returns[excess_returns < 0]
+            downside_std = np.sqrt(252) * np.sqrt(np.mean(downside_returns**2))
+            
+            if downside_std == 0:
+                return 0.0
+            
+            return float((excess_returns.mean() * 252) / downside_std)
+            
+        except Exception as e:
+            self._debug(f"Error calculating Sortino ratio: {str(e)}")
+            return 0.0
+
+    def _calculate_capture_ratios(self, returns):
+        """Calculate up/down capture ratios"""
+        if self.ticker == self.benchmark:
+            return {'up_capture': 1.0, 'down_capture': 1.0}
+        
+        benchmark_returns = self.data['benchmark_history']['Close'].pct_change().dropna()
+        returns, benchmark_returns = returns.align(benchmark_returns, join='inner')
+        
+        # Separate up and down market periods
+        up_market = benchmark_returns > 0
+        down_market = benchmark_returns < 0
+        
+        # Calculate capture ratios
+        up_capture = (returns[up_market].mean() / benchmark_returns[up_market].mean()) if any(up_market) else 0.0
+        down_capture = (returns[down_market].mean() / benchmark_returns[down_market].mean()) if any(down_market) else 0.0
+        
+        return {
+            'up_capture': float(up_capture),
+            'down_capture': float(down_capture)
+        } 
