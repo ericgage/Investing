@@ -3,10 +3,12 @@ from .analyzer import ETFAnalyzer
 from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
+from . import __version__
 
 console = Console()
 
 @click.group()
+@click.version_option(version=__version__)
 def cli():
     """ETF Analyzer - A tool for analyzing ETF performance and metrics"""
     pass
@@ -17,11 +19,13 @@ def cli():
 @click.option('--validate', '-val', is_flag=True, help='Compare with external sources')
 @click.option('--sources', '-s', is_flag=True, help='Compare different data sources')
 @click.option('--history', '-h', is_flag=True, help='Show historical metrics')
-def analyze(ticker, verbose, validate, sources, history):
+@click.option('--costs', '-c', is_flag=True, help='Show trading cost analysis')
+@click.option('--debug', '-d', is_flag=True, help='Enable debug output')
+def analyze(ticker, verbose, validate, sources, history, costs, debug):
     """Analyze an ETF with validation options"""
     try:
         with console.status(f"[bold green]Analyzing {ticker}..."):
-            analyzer = ETFAnalyzer(ticker)
+            analyzer = ETFAnalyzer(ticker, debug=debug)
             analyzer.collect_basic_info()
             analyzer.collect_performance()
             analyzer.calculate_metrics()
@@ -158,12 +162,21 @@ def analyze(ticker, verbose, validate, sources, history):
             
             console.print("\n")
             console.print(hist_table)
+
+        if costs:
+            cost_analysis = analyzer.analyze_trading_costs()
+            if cost_analysis:
+                console.print("\n[cyan]Trading Cost Analysis[/cyan]")
+                for component, value in cost_analysis.items():
+                    console.print(f"{component}: {value:.4%}")
     except Exception as e:
         console.print(f"[red]Error analyzing {ticker}: {str(e)}[/red]")
 
 @cli.command()
 @click.argument('tickers', nargs=-1)
-def compare(tickers):
+@click.option('--costs', '-c', is_flag=True, help='Show trading cost analysis')
+@click.option('--debug', '-d', is_flag=True, help='Enable debug output')
+def compare(tickers, costs, debug):
     """Compare multiple ETFs"""
     if len(tickers) < 2:
         console.print("[red]Please provide at least two tickers to compare[/red]")
@@ -200,6 +213,24 @@ def compare(tickers):
         table.add_row(*row)
     
     console.print(table)
+
+    if costs:
+        # Add cost comparison table
+        cost_table = Table(title="Trading Cost Comparison")
+        cost_table.add_column("Cost Component", style="cyan")
+        for ticker in tickers:
+            cost_table.add_column(ticker.upper(), style="magenta")
+            
+        cost_components = ["Expense Ratio", "Bid-Ask Spread", "Market Impact", "Total Cost"]
+        for component in cost_components:
+            row = [component]
+            for ticker in tickers:
+                costs = analyzers[ticker].analyze_trading_costs()
+                row.append(f"{costs[component]:.4%}" if costs else "N/A")
+            cost_table.add_row(*row)
+            
+        console.print("\n")
+        console.print(cost_table)
 
 def _get_difference_style(diff, metric):
     """Get color style based on difference magnitude and metric type"""

@@ -7,9 +7,11 @@ setup(
     install_requires=[
         "yfinance",
         "pandas",
-        "numpy",
-        "click",
+        "selenium",
+        "selenium-stealth",
         "rich",
+        "click",
+        "beautifulsoup4"
     ],
     author="Your Name",
     author_email="your.email@example.com",
@@ -25,7 +27,7 @@ setup(
     python_requires=">=3.6",
     entry_points={
         'console_scripts': [
-            'etf-analyzer=etf_analyzer.cli:cli',
+            'etfa=etf_analyzer.cli:cli',
         ],
     },
 ) 

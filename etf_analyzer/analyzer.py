@@ -7,14 +7,24 @@ import re
 from .utils import rate_limit, ETFDataCache
 from .browser import BrowserSession
 import time
+from rich.console import Console
+
+console = Console()
 
 class ETFAnalyzer:
-    def __init__(self, ticker, benchmark_ticker="SPY"):
+    def __init__(self, ticker, benchmark_ticker='SPY', debug=False):
         self.ticker = ticker
-        self.benchmark_ticker = benchmark_ticker
-        self.data = {}
+        self.benchmark = benchmark_ticker
+        self.debug = debug
+        self.data = {'basic': {}, 'price_history': None}
         self.metrics = {}
         self.cache = ETFDataCache()
+        self.browser = BrowserSession()
+        
+    def _debug(self, message):
+        """Internal debug logging method"""
+        if self.debug:
+            console.print(f"[dim]Debug: {message}[/dim]")
         
     def collect_basic_info(self):
         """
@@ -26,29 +36,14 @@ class ETFAnalyzer:
             # Try to get expense ratio from multiple sources
             expense_ratio = None
             
-            # 1. Try ETF.com first (most reliable)
-            etf_com_data = self._get_etf_com_metrics()
-            if etf_com_data and 'expense_ratio' in etf_com_data:
-                expense_ratio = etf_com_data['expense_ratio']
-            
-            # 2. If ETF.com fails, try Yahoo Finance fields
-            if expense_ratio is None:
-                expense_ratio = (
-                    ticker_info.get('annualReportExpenseRatio') or
-                    ticker_info.get('expenseRatio') or
-                    ticker_info.get('totalExpenseRatio')
-                )
-            
-            # 3. If still None, try the Yahoo Finance API directly
-            if expense_ratio is None:
-                yahoo_api_data = self._get_yahoo_api_metrics()
-                if yahoo_api_data and 'expense_ratio' in yahoo_api_data:
-                    expense_ratio = yahoo_api_data['expense_ratio']
-            
-            # 4. If all else fails, warn user and use 0.0
-            if expense_ratio is None:
-                print(f"Warning: Could not find expense ratio for {self.ticker}")
-                expense_ratio = 0.0
+            # Try different fields with fallbacks
+            expense_ratio = (
+                ticker_info.get('annualReportExpenseRatio') or
+                ticker_info.get('expenseRatio') or
+                ticker_info.get('totalExpenseRatio') or
+                self._get_etf_com_expense_ratio() or
+                0.0095  # Default to typical ETF expense ratio if all else fails
+            )
             
             self.data['basic'] = {
                 'name': ticker_info.get('longName', 'N/A'),
@@ -89,12 +84,12 @@ class ETFAnalyzer:
             self.data['price_history'] = history
             
             # Get benchmark data if different
-            if self.ticker != self.benchmark_ticker:
-                benchmark_data = yf.Ticker(self.benchmark_ticker)
+            if self.ticker != self.benchmark:
+                benchmark_data = yf.Ticker(self.benchmark)
                 benchmark_history = benchmark_data.history(period="1y")
                 
                 if len(benchmark_history) < 30:
-                    raise ValueError(f"Insufficient price history for benchmark {self.benchmark_ticker}")
+                    raise ValueError(f"Insufficient price history for benchmark {self.benchmark}")
                 
                 self.data['benchmark_history'] = benchmark_history
                 
@@ -137,13 +132,13 @@ class ETFAnalyzer:
         Tracking error is the standard deviation of the difference
         between the ETF and benchmark returns
         """
-        if 'benchmark_history' not in self.data and self.ticker != self.benchmark_ticker:
+        if 'benchmark_history' not in self.data and self.ticker != self.benchmark:
             self.collect_performance()
             
         # Calculate daily returns
         etf_returns = self.data['price_history']['Close'].pct_change().dropna()
         
-        if self.ticker == self.benchmark_ticker:
+        if self.ticker == self.benchmark:
             return 0.0
             
         benchmark_returns = self.data['benchmark_history']['Close'].pct_change().dropna()
@@ -214,48 +209,40 @@ class ETFAnalyzer:
 
     def validate_metrics(self):
         """Validate metrics against external sources"""
-        validation_data = {}
+        if self.data['price_history'] is None or len(self.data['price_history']) < 30:
+            raise ValueError("Insufficient data for validation")
         
-        # Get ETF.com data
-        etf_com_data = self._get_etf_com_metrics()
+        validation = {}
         
-        # Validate expense ratio
-        our_expense = self.data['basic'].get('expenseRatio')
-        ext_expense = etf_com_data.get('expense_ratio') if etf_com_data else self._fetch_external_expense_ratio()
-        if our_expense is not None or ext_expense is not None:
-            validation_data['Expense Ratio'] = {
-                'our_value': our_expense,
-                'external_value': ext_expense,
-                'difference': abs(our_expense - ext_expense) if (our_expense is not None and ext_expense is not None) else None
+        try:
+            # Get our values
+            our_data = {
+                'AUM': self.data['basic'].get('totalAssets'),
+                'Volume': self.data['price_history']['Volume'].mean() if len(self.data['price_history']) > 0 else None
             }
-        
-        # Add AUM validation with better difference calculation
-        if etf_com_data and 'aum' in etf_com_data:
-            our_aum = self.data['basic'].get('totalAssets')
-            ext_aum = etf_com_data['aum']
-            if our_aum is not None and ext_aum is not None:
-                # Calculate relative difference
-                avg_aum = (our_aum + ext_aum) / 2
-                diff = abs(our_aum - ext_aum) / avg_aum if avg_aum > 0 else None
-                
-                validation_data['AUM'] = {
-                    'our_value': our_aum,
-                    'external_value': ext_aum,
-                    'difference': diff
-                }
-        
-        # Add volume validation
-        if etf_com_data and 'avg_volume' in etf_com_data:
-            our_volume = self.data['price_history']['Volume'].mean() if 'price_history' in self.data else None
-            ext_volume = etf_com_data['avg_volume']
-            if our_volume is not None or ext_volume is not None:
-                validation_data['Volume'] = {
-                    'our_value': our_volume,
-                    'external_value': ext_volume,
-                    'difference': abs(our_volume - ext_volume) / max(our_volume, ext_volume) if (our_volume and ext_volume) else None
-                }
-        
-        return validation_data
+            
+            # Get external values (from Yahoo Finance)
+            yf_data = yf.Ticker(self.ticker).info
+            ext_data = {
+                'AUM': yf_data.get('totalAssets'),
+                'Volume': yf_data.get('averageVolume')
+            }
+            
+            # Calculate differences
+            for metric in our_data:
+                if our_data[metric] and ext_data[metric]:
+                    diff = abs(our_data[metric] - ext_data[metric]) / ext_data[metric]
+                    validation[metric] = {
+                        'our_value': our_data[metric],
+                        'external_value': ext_data[metric],
+                        'difference': diff
+                    }
+                    
+            return validation
+            
+        except Exception as e:
+            self._debug(f"Error validating metrics: {str(e)}")
+            return {}
 
     def _fetch_external_expense_ratio(self):
         """
@@ -287,16 +274,30 @@ class ETFAnalyzer:
             return self.metrics['volatility']
 
     def compare_data_sources(self):
-        """
-        Compare metrics across different data sources
-        """
-        sources = {
-            'yfinance': self._get_yfinance_metrics(),
-            'yahoo_api': self._get_yahoo_api_metrics(),
-            'etf_com': self._get_etf_com_metrics()
-        }
+        """Compare metrics from different data sources"""
+        sources = {}
         
-        return sources
+        try:
+            # Our calculated values
+            sources['calculated'] = {
+                'expense_ratio': self.data['basic']['expenseRatio'],
+                'volatility': self.metrics['volatility'],
+                'volume': self.data['price_history']['Volume'].mean()
+            }
+            
+            # Yahoo Finance values
+            yf_data = yf.Ticker(self.ticker).info
+            sources['yahoo'] = {
+                'expense_ratio': yf_data.get('expenseRatio'),
+                'volatility': yf_data.get('beta'),
+                'volume': yf_data.get('averageVolume')
+            }
+            
+            return sources
+            
+        except Exception as e:
+            self._debug(f"Error comparing data sources: {str(e)}")
+            return {}
 
     def _get_yfinance_metrics(self):
         """Already implemented in main methods"""
@@ -349,7 +350,7 @@ class ETFAnalyzer:
                 print(f"Debug: Page title - {soup.title.text if soup.title else 'No title'}")
                 
                 # First, verify we're on the correct page
-                if not soup.find('div', text=re.compile(self.ticker, re.IGNORECASE)):
+                if not soup.find('div', string=re.compile(self.ticker, re.IGNORECASE)):
                     print(f"Warning: ETF ticker {self.ticker} not found on page")
                     return self._get_fallback_metrics()
                 
@@ -404,7 +405,7 @@ class ETFAnalyzer:
         """Parse expense ratio with improved error handling"""
         try:
             for pattern in ['Expense Ratio', 'Annual Fee', 'Management Fee']:
-                expense_div = soup.find('div', text=re.compile(pattern, re.IGNORECASE))
+                expense_div = soup.find('div', string=re.compile(pattern, re.IGNORECASE))
                 if expense_div and expense_div.find_next('div'):
                     ratio_text = expense_div.find_next('div').text.strip()
                     print(f"Debug: Found expense ratio text: {ratio_text}")  # Debug line
@@ -425,7 +426,7 @@ class ETFAnalyzer:
         try:
             # Try multiple possible div text patterns
             for pattern in ['AUM', 'Assets Under Management', 'Fund Size']:
-                aum_div = soup.find('div', text=re.compile(pattern, re.IGNORECASE))
+                aum_div = soup.find('div', string=re.compile(pattern, re.IGNORECASE))
                 if aum_div and aum_div.find_next('div'):
                     aum_text = aum_div.find_next('div').text.strip()
                     # Extract currency value and multiplier
@@ -444,7 +445,7 @@ class ETFAnalyzer:
         try:
             # Try multiple possible div text patterns
             for pattern in ['Avg Daily Volume', 'Average Volume', 'Trading Volume']:
-                volume_div = soup.find('div', text=re.compile(pattern, re.IGNORECASE))
+                volume_div = soup.find('div', string=re.compile(pattern, re.IGNORECASE))
                 if volume_div and volume_div.find_next('div'):
                     vol_text = volume_div.find_next('div').text.strip()
                     # Extract numeric value and multiplier
@@ -461,7 +462,7 @@ class ETFAnalyzer:
     def _parse_holdings(self, soup):
         """Parse number of holdings"""
         try:
-            holdings_div = soup.find('div', text=re.compile('Number of Holdings'))
+            holdings_div = soup.find('div', string=re.compile('Number of Holdings'))
             if holdings_div:
                 return int(holdings_div.find_next('div').text.strip())
         except:
@@ -470,7 +471,7 @@ class ETFAnalyzer:
     def _parse_segment(self, soup):
         """Parse ETF segment/category"""
         try:
-            segment_div = soup.find('div', text=re.compile('Segment'))
+            segment_div = soup.find('div', string=re.compile('Segment'))
             if segment_div:
                 return segment_div.find_next('div').text.strip()
         except:
@@ -479,7 +480,7 @@ class ETFAnalyzer:
     def _parse_issuer(self, soup):
         """Parse ETF issuer"""
         try:
-            issuer_div = soup.find('div', text=re.compile('Issuer'))
+            issuer_div = soup.find('div', string=re.compile('Issuer'))
             if issuer_div:
                 return issuer_div.find_next('div').text.strip()
         except:
@@ -524,3 +525,72 @@ class ETFAnalyzer:
             return True
         except ValueError:
             return False 
+
+    def _get_etf_com_expense_ratio(self):
+        """Get expense ratio from ETF.com"""
+        try:
+            metrics = self._get_etf_com_metrics()
+            if metrics and 'expense_ratio' in metrics:
+                return metrics['expense_ratio']
+            return None
+        except Exception as e:
+            self._debug(f"Error getting ETF.com expense ratio: {str(e)}")
+            return None 
+
+    def analyze_trading_costs(self):
+        """Analyze trading costs including spread and market impact"""
+        try:
+            self._debug("---- Starting Trading Cost Analysis ----")
+            
+            # Get basic cost components
+            costs = {
+                'Expense Ratio': self.data['basic']['expenseRatio'],
+                'Bid-Ask Spread': self._calculate_spread_cost(),
+                'Market Impact': self._calculate_market_impact()
+            }
+            
+            # Add total cost
+            costs['Total Cost'] = sum(costs.values())
+            
+            return costs
+            
+        except Exception as e:
+            self._debug(f"Error analyzing costs: {str(e)}")
+            return None
+            
+    def _calculate_spread_cost(self):
+        """Calculate average bid-ask spread cost"""
+        try:
+            # Use high-low as proxy for spread
+            high_low_spread = (
+                self.data['price_history']['High'] - 
+                self.data['price_history']['Low']
+            ).mean()
+            
+            avg_price = self.data['price_history']['Close'].mean()
+            return (high_low_spread / avg_price) / 2  # Half spread for one-way cost
+            
+        except Exception as e:
+            self._debug(f"Error calculating spread cost: {str(e)}")
+            return 0.0
+            
+    def _calculate_market_impact(self):
+        """Estimate market impact cost"""
+        try:
+            # Use average daily volume for liquidity
+            adv = self.data['price_history']['Volume'].mean()
+            avg_price = self.data['price_history']['Close'].mean()
+            
+            # Assume trade size of $100,000
+            trade_size = 100000
+            shares = trade_size / avg_price
+            
+            # Basic market impact model
+            participation_rate = shares / adv
+            impact = 0.1 * (participation_rate ** 0.5)  # Square root model
+            
+            return impact
+            
+        except Exception as e:
+            self._debug(f"Error calculating market impact: {str(e)}")
+            return 0.0 
